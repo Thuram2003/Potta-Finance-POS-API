@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PottaAPI Test Dashboard</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .endpoint {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            background: #f9f9f9;
+        }
+        .endpoint h3 {
+            margin: 0 0 10px 0;
+            color: #333;
+        }
+        .test-btn {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        .test-btn:hover {
+            background: #0056b3;
+        }
+        .result {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+        }
+        .success {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        .error {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        .header {
+            text-align: center;
+            color: #333;
+            margin-bottom: 30px;
+        }
+        .status {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .status.online {
+            background: #d4edda;
+            color: #155724;
+        }
+        .status.offline {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        .info-box {
+            background: #e7f3ff;
+            border: 1px solid #b8daff;
+            border-radius: 5px;
+            padding: 15px;
+            margin: 20px 0;
+            color: #004085;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>PottaAPI Test Dashboard</h1>
+            <p>Test your local POS API endpoints - Now served directly from the API!</p>
+            <div id="apiStatus" class="status offline">API Status: Checking...</div>
+        </div>
+
+        <div class="info-box">
+            <h4>📋 Quick Access Links</h4>
+            <p>
+                <strong>Swagger Documentation:</strong> <a href="/swagger" target="_blank">http://localhost:5001/swagger</a><br>
+                <strong>API Base URL:</strong> http://localhost:5001<br>
+                <strong>This Test Page:</strong> http://localhost:5001
+            </p>
+        </div>
+
+        <div class="endpoint">
+            <h3>🔍 Health Check</h3>
+            <p>Test if the API is running and database is accessible</p>
+            <button class="test-btn" onclick="testEndpoint('/api/sync/health', 'health')">Test Health</button>
+            <div id="health-result" class="result" style="display: none;"></div>
+        </div>
+
+        <div class="endpoint">
+            <h3>👥 Staff Management</h3>
+            <p>Get active staff and their daily codes</p>
+            <button class="test-btn" onclick="testEndpoint('/api/staff', 'staff')">Get Staff</button>
+            <button class="test-btn" onclick="testEndpoint('/api/staff/codes', 'staffCodes')">Get Daily Codes</button>
+            <div id="staff-result" class="result" style="display: none;"></div>
+            <div id="staffCodes-result" class="result" style="display: none;"></div>
+        </div>
+
+        <div class="endpoint">
+            <h3>🍽️ Menu Items</h3>
+            <p>Get menu items, categories, and bundles</p>
+            <button class="test-btn" onclick="testEndpoint('/api/menu/items', 'menu')">Get Menu Items</button>
+            <button class="test-btn" onclick="testEndpoint('/api/menu/categories', 'categories')">Get Categories</button>
+            <button class="test-btn" onclick="testEndpoint('/api/menu/bundles', 'bundles')">Get Bundles</button>
+            <div id="menu-result" class="result" style="display: none;"></div>
+            <div id="categories-result" class="result" style="display: none;"></div>
+            <div id="bundles-result" class="result" style="display: none;"></div>
+        </div>
+
+        <div class="endpoint">
+            <h3>🪑 Tables</h3>
+            <p>Get table information and status</p>
+            <button class="test-btn" onclick="testEndpoint('/api/tables', 'tables')">Get All Tables</button>
+            <button class="test-btn" onclick="testEndpoint('/api/tables/available', 'availableTables')">Get Available Tables</button>
+            <div id="tables-result" class="result" style="display: none;"></div>
+            <div id="availableTables-result" class="result" style="display: none;"></div>
+        </div>
+
+        <div class="endpoint">
+            <h3>👤 Customers</h3>
+            <p>Get customer information</p>
+            <button class="test-btn" onclick="testEndpoint('/api/customers', 'customers')">Get Customers</button>
+            <div id="customers-result" class="result" style="display: none;"></div>
+        </div>
+
+        <div class="endpoint">
+            <h3>📱 Orders</h3>
+            <p>Get waiting transactions (mobile orders)</p>
+            <button class="test-btn" onclick="testEndpoint('/api/orders/waiting', 'orders')">Get Waiting Orders</button>
+            <button class="test-btn" onclick="testEndpoint('/api/orders/pending', 'pending')">Get Pending Orders</button>
+            <div id="orders-result" class="result" style="display: none;"></div>
+            <div id="pending-result" class="result" style="display: none;"></div>
+        </div>
+
+        <div class="endpoint">
+            <h3>🔄 Full Sync</h3>
+            <p>Get complete data for mobile app synchronization</p>
+            <button class="test-btn" onclick="testEndpoint('/api/sync/full', 'fullSync')">Get Full Sync Data</button>
+            <div id="fullSync-result" class="result" style="display: none;"></div>
+        </div>
+
+        <div class="endpoint">
+            <h3>🧪 Test Staff Login</h3>
+            <p>Test staff authentication with daily code</p>
+            <input type="text" id="dailyCode" placeholder="Enter daily code (e.g., 1234)" style="padding: 8px; margin-right: 10px; border: 1px solid #ddd; border-radius: 4px;">
+            <button class="test-btn" onclick="testStaffLogin()">Test Login</button>
+            <div id="login-result" class="result" style="display: none;"></div>
+        </div>
+    </div>
+
+    <script>
+        // Use relative URLs since we're served from the same origin
+        const API_BASE = '';
+
+        // Check API status on page load
+        window.onload = function() {
+            checkApiStatus();
+        };
+
+        async function checkApiStatus() {
+            try {
+                const response = await fetch(`${API_BASE}/api/sync/health`);
+                const statusElement = document.getElementById('apiStatus');
+                
+                if (response.ok) {
+                    statusElement.textContent = 'API Status: Online ✅';
+                    statusElement.className = 'status online';
+                } else {
+                    statusElement.textContent = 'API Status: Error ❌';
+                    statusElement.className = 'status offline';
+                }
+            } catch (error) {
+                const statusElement = document.getElementById('apiStatus');
+                statusElement.textContent = 'API Status: Offline ❌';
+                statusElement.className = 'status offline';
+            }
+        }
+
+        async function testEndpoint(endpoint, resultId) {
+            const resultDiv = document.getElementById(`${resultId}-result`);
+            resultDiv.style.display = 'block';
+            resultDiv.textContent = 'Loading...';
+            resultDiv.className = 'result';
+
+            try {
+                const response = await fetch(`${API_BASE}${endpoint}`);
+                const data = await response.json();
+                
+                if (response.ok) {
+                    resultDiv.textContent = `✅ Success (${response.status})\n\n${JSON.stringify(data, null, 2)}`;
+                    resultDiv.className = 'result success';
+                } else {
+                    resultDiv.textContent = `❌ Error (${response.status})\n\n${JSON.stringify(data, null, 2)}`;
+                    resultDiv.className = 'result error';
+                }
+            } catch (error) {
+                resultDiv.textContent = `❌ Network Error\n\n${error.message}`;
+                resultDiv.className = 'result error';
+            }
+        }
+
+        async function testStaffLogin() {
+            const dailyCode = document.getElementById('dailyCode').value;
+            const resultDiv = document.getElementById('login-result');
+            
+            if (!dailyCode) {
+                resultDiv.style.display = 'block';
+                resultDiv.textContent = '❌ Please enter a daily code';
+                resultDiv.className = 'result error';
+                return;
+            }
+
+            resultDiv.style.display = 'block';
+            resultDiv.textContent = 'Testing login...';
+            resultDiv.className = 'result';
+
+            try {
+                const response = await fetch(`${API_BASE}/api/staff/login`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ dailyCode: dailyCode })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    if (data.success) {
+                        resultDiv.textContent = `✅ Login Successful!\n\nWelcome: ${data.staff?.fullName || 'Unknown'}\nCode: ${data.staff?.dailyCode}\nGenerated: ${data.staff?.codeGeneratedDate}`;
+                        resultDiv.className = 'result success';
+                    } else {
+                        resultDiv.textContent = `❌ Login Failed\n\n${data.message}`;
+                        resultDiv.className = 'result error';
+                    }
+                } else {
+                    resultDiv.textContent = `❌ Error (${response.status})\n\n${JSON.stringify(data, null, 2)}`;
+                    resultDiv.className = 'result error';
+                }
+            } catch (error) {
+                resultDiv.textContent = `❌ Network Error\n\n${error.message}`;
+                resultDiv.className = 'result error';
+            }
+        }
+    </script>
+</body>
+</html>
