@@ -10,263 +10,105 @@ namespace PottaAPI.Services
 
         public DatabaseService()
         {
-            // Try multiple possible database locations
-            var possiblePaths = new[]
-            {
-                @"c:\Users\Thuram Jr\source\repos\PottaPOS\Potta Finance\Potta Finance\bin\Debug\net8.0-windows\pottadb.db",
-                @"c:\Users\Thuram Jr\source\repos\PottaPOS\Potta Finance\Potta Finance\pottadb.db",
-                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "pottadb.db"),
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "PottaPOS", "pottadb.db")
-            };
-
-            string dbPath = null;
-            foreach (var path in possiblePaths)
-            {
-                if (File.Exists(path))
-                {
-                    dbPath = path;
-                    break;
-                }
-            }
+            string dbPath = FindDatabasePath();
 
             if (dbPath == null)
             {
-                // If no existing database found, use the primary location
-                dbPath = possiblePaths[0];
-                Console.WriteLine($"Warning: Database not found. Will attempt to use: {dbPath}");
+                throw new FileNotFoundException(
+                    "Database file 'pottadb.db' not found. Please ensure the POS application is installed correctly. " +
+                    "The database should be located in the same directory as the application executables.");
+            }
+
+            Console.WriteLine($"Database found at: {dbPath}");
+            _connectionString = $"Data Source={dbPath};Foreign Keys=True;Mode=ReadWrite";
+        }
+
+        private string FindDatabasePath()
+        {
+            // Get the base directory where the API is running from
+            var baseDirectory = AppDomain.CurrentDomain.BaseDirectory;
+
+            // Check if we're in Debug mode (development environment)
+            var isDebugMode = baseDirectory.Contains(@"\bin\Debug\", StringComparison.OrdinalIgnoreCase);
+
+            List<string> possiblePaths = new List<string>();
+
+            if (isDebugMode)
+            {
+                // Debug mode: Look in the WPF app's debug output directory
+                // Navigate from API bin folder to WPF app bin folder
+                var debugPath = Path.GetFullPath(Path.Combine(baseDirectory, @"..\..\..\..\Potta Finance\bin\Debug\net8.0-windows\pottadb.db"));
+                possiblePaths.Add(debugPath);
+                Console.WriteLine($"Running in DEBUG mode. Looking for database at: {debugPath}");
             }
             else
             {
-                Console.WriteLine($"Database found at: {dbPath}");
+                // Production mode: Database is in the same directory as the executables
+                // When installed via Inno Setup, both PottaAPI.exe and Potta Finance.exe are in the same folder
+                possiblePaths.Add(Path.Combine(baseDirectory, "pottadb.db"));
+
+                // Also check parent directory (in case API is in a subfolder)
+                var parentDir = Directory.GetParent(baseDirectory)?.FullName;
+                if (parentDir != null)
+                {
+                    possiblePaths.Add(Path.Combine(parentDir, "pottadb.db"));
+                }
+
+                // Check common installation paths
+                var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+                possiblePaths.Add(Path.Combine(localAppData, "Programs", "Potta Finance POS", "pottadb.db"));
+                possiblePaths.Add(Path.Combine(localAppData, "Potta Finance POS", "pottadb.db"));
+
+                Console.WriteLine($"Running in PRODUCTION mode. Searching for database...");
             }
 
-            _connectionString = $"Data Source={dbPath};Foreign Keys=True";
+            // Search for the database file
+            foreach (var path in possiblePaths)
+            {
+                Console.WriteLine($"Checking: {path}");
+                if (File.Exists(path))
+                {
+                    return path;
+                }
+            }
+
+            // Log all attempted paths for debugging
+            Console.WriteLine("Database not found in any of the following locations:");
+            foreach (var path in possiblePaths)
+            {
+                Console.WriteLine($"  - {path}");
+            }
+
+            return null;
         }
 
         public async Task TestConnectionAsync()
         {
-            using var connection = new SqliteConnection(_connectionString);
-            await connection.OpenAsync();
-            
-            var command = connection.CreateCommand();
-            command.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table'";
-            var tableCount = await command.ExecuteScalarAsync();
-            
-            Console.WriteLine($"Database connected successfully. Found {tableCount} tables.");
-            
-            // Ensure WaitingTransactions table has the correct schema
-            await EnsureWaitingTransactionsSchemaAsync();
-        }
-
-        private async Task EnsureWaitingTransactionsSchemaAsync()
-        {
-            using var connection = new SqliteConnection(_connectionString);
-            await connection.OpenAsync();
-            
-            // First, check if the table exists and drop it if it has foreign key constraints
-            var checkCommand = connection.CreateCommand();
-            checkCommand.CommandText = "SELECT sql FROM sqlite_master WHERE type='table' AND name='WaitingTransactions'";
-            var existingSchema = await checkCommand.ExecuteScalarAsync() as string;
-            
-            // Add StaffId column if it doesn't exist to avoid data loss
-            var pragmaCommand = connection.CreateCommand();
-            pragmaCommand.CommandText = "PRAGMA table_info(WaitingTransactions)";
-            using (var reader = await pragmaCommand.ExecuteReaderAsync())
+            try
             {
-                var hasStaffId = false;
-                while (await reader.ReadAsync())
-                {
-                    if (reader.GetString(1).Equals("StaffId", StringComparison.OrdinalIgnoreCase))
-                    {
-                        hasStaffId = true;
-                        break;
-                    }
-                }
-                if (!hasStaffId)
-                {
-                    Console.WriteLine("Adding StaffId column to WaitingTransactions table...");
-                    var alterCommand = connection.CreateCommand();
-                    alterCommand.CommandText = "ALTER TABLE WaitingTransactions ADD COLUMN StaffId INTEGER";
-                    await alterCommand.ExecuteNonQueryAsync();
-                }
-            }
-            
-            var command = connection.CreateCommand();
-            command.CommandText = @"
-                CREATE TABLE IF NOT EXISTS WaitingTransactions (
-                    TransactionId TEXT PRIMARY KEY,
-                    CartItems TEXT NOT NULL,
-                    CustomerId TEXT,
-                    TableId TEXT,
-                    TableNumber INTEGER,
-                    TableName TEXT,
-                    StaffId INTEGER,
-                    CreatedDate DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    ModifiedDate DATETIME DEFAULT CURRENT_TIMESTAMP
-                )";
-            
-            await command.ExecuteNonQueryAsync();
-            Console.WriteLine("WaitingTransactions table schema ensured without foreign key constraints.");
-        }
+                using var connection = new SqliteConnection(_connectionString);
+                await connection.OpenAsync();
 
-        public async Task<List<MenuItemDto>> GetMenuItemsAsync()
-        {
-            var menuItems = new List<MenuItemDto>();
-            
-            using var connection = new SqliteConnection(_connectionString);
-            await connection.OpenAsync();
-            
-            var command = connection.CreateCommand();
-            command.CommandText = @"
-                SELECT productId, name, sku, type, categories, description, 
-                       cost, salesPrice, imageData, inventoryOnHand, 
-                       taxable, taxId, status, hasVariations, variationCount
-                FROM Products 
-                WHERE status = 1
-                ORDER BY name";
-            
-            using var reader = await command.ExecuteReaderAsync();
-            while (await reader.ReadAsync())
-            {
-                menuItems.Add(new MenuItemDto
-                {
-                    ProductId = reader["productId"]?.ToString() ?? "",
-                    Name = reader["name"]?.ToString() ?? "",
-                    SKU = reader["sku"]?.ToString() ?? "",
-                    Type = reader["type"]?.ToString() ?? "",
-                    Categories = ParseCategories(reader["categories"]?.ToString()),
-                    Description = reader["description"]?.ToString() ?? "",
-                    Cost = Convert.ToDecimal(reader["cost"] ?? 0),
-                    SalesPrice = Convert.ToDecimal(reader["salesPrice"] ?? 0),
-                    ImageData = reader["imageData"] as byte[],
-                    InventoryOnHand = Convert.ToInt32(reader["inventoryOnHand"] ?? 0),
-                    Taxable = Convert.ToBoolean(reader["taxable"] ?? false),
-                    TaxId = reader["taxId"]?.ToString(),
-                    IsActive = Convert.ToBoolean(reader["status"] ?? true),
-                    HasVariations = Convert.ToBoolean(reader["hasVariations"] ?? false),
-                    VariationCount = Convert.ToInt32(reader["variationCount"] ?? 0)
-                });
-            }
-            
-            return menuItems;
-        }
+                var command = connection.CreateCommand();
+                command.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table'";
+                var tableCount = await command.ExecuteScalarAsync();
 
-        public async Task<List<CategoryDto>> GetCategoriesAsync()
-        {
-            var categories = new List<CategoryDto>();
-            
-            using var connection = new SqliteConnection(_connectionString);
-            await connection.OpenAsync();
-            
-            var command = connection.CreateCommand();
-            command.CommandText = @"
-                SELECT categoryId, categoryName, description, isActive
-                FROM Categories 
-                WHERE isActive = 1
-                ORDER BY categoryName";
-            
-            using var reader = await command.ExecuteReaderAsync();
-            while (await reader.ReadAsync())
-            {
-                categories.Add(new CategoryDto
-                {
-                    CategoryId = reader["categoryId"]?.ToString() ?? "",
-                    CategoryName = reader["categoryName"]?.ToString() ?? "",
-                    Description = reader["description"]?.ToString() ?? "",
-                    IsActive = Convert.ToBoolean(reader["isActive"] ?? true)
-                });
+                Console.WriteLine($"Database connected successfully. Found {tableCount} tables.");
             }
-            
-            return categories;
-        }
-
-        public async Task<List<BundleItemDto>> GetBundleItemsAsync()
-        {
-            var bundles = new List<BundleItemDto>();
-            
-            using var connection = new SqliteConnection(_connectionString);
-            await connection.OpenAsync();
-            
-            var command = connection.CreateCommand();
-            command.CommandText = @"
-                SELECT b.bundleId, b.name, b.sku, b.structure, b.description,
-                       b.cost, b.salesPrice, b.imageData, b.inventoryOnHand,
-                       b.taxable, b.taxId, b.status
-                FROM BundleItems b
-                WHERE b.status = 1
-                ORDER BY b.name";
-            
-            using var reader = await command.ExecuteReaderAsync();
-            while (await reader.ReadAsync())
+            catch (Exception ex)
             {
-                var bundle = new BundleItemDto
-                {
-                    BundleId = reader["bundleId"]?.ToString() ?? "",
-                    Name = reader["name"]?.ToString() ?? "",
-                    SKU = reader["sku"]?.ToString() ?? "",
-                    Structure = reader["structure"]?.ToString() ?? "",
-                    Description = reader["description"]?.ToString() ?? "",
-                    Cost = Convert.ToDecimal(reader["cost"] ?? 0),
-                    SalesPrice = Convert.ToDecimal(reader["salesPrice"] ?? 0),
-                    ImageData = reader["imageData"] as byte[],
-                    InventoryOnHand = Convert.ToInt32(reader["inventoryOnHand"] ?? 0),
-                    Taxable = Convert.ToBoolean(reader["taxable"] ?? false),
-                    TaxId = reader["taxId"]?.ToString(),
-                    IsActive = Convert.ToBoolean(reader["status"] ?? true),
-                    Components = new List<BundleComponentDto>()
-                };
-                
-                // Get bundle components
-                bundle.Components = await GetBundleComponentsAsync(bundle.BundleId);
-                bundles.Add(bundle);
+                Console.WriteLine($"ERROR: Failed to connect to database: {ex.Message}");
+                throw new Exception($"Database connection failed. Please ensure the Potta Finance POS application is installed and the database exists. Error: {ex.Message}");
             }
-            
-            return bundles;
-        }
-
-        public async Task<List<ProductVariationDto>> GetProductVariationsAsync()
-        {
-            var variations = new List<ProductVariationDto>();
-            
-            using var connection = new SqliteConnection(_connectionString);
-            await connection.OpenAsync();
-            
-            var command = connection.CreateCommand();
-            command.CommandText = @"
-                SELECT variationId, parentProductId, sku, name, cost, salesPrice,
-                       inventoryOnHand, reorderPoint, imageData, status
-                FROM ProductVariations 
-                WHERE status = 1
-                ORDER BY parentProductId, name";
-            
-            using var reader = await command.ExecuteReaderAsync();
-            while (await reader.ReadAsync())
-            {
-                variations.Add(new ProductVariationDto
-                {
-                    VariationId = reader["variationId"]?.ToString() ?? "",
-                    ParentProductId = reader["parentProductId"]?.ToString() ?? "",
-                    SKU = reader["sku"]?.ToString() ?? "",
-                    Name = reader["name"]?.ToString() ?? "",
-                    Cost = Convert.ToDecimal(reader["cost"] ?? 0),
-                    SalesPrice = Convert.ToDecimal(reader["salesPrice"] ?? 0),
-                    InventoryOnHand = Convert.ToInt32(reader["inventoryOnHand"] ?? 0),
-                    ReorderPoint = Convert.ToInt32(reader["reorderPoint"] ?? 0),
-                    ImageData = reader["imageData"] as byte[],
-                    IsActive = Convert.ToBoolean(reader["status"] ?? true)
-                });
-            }
-            
-            return variations;
         }
 
         public async Task<List<StaffDto>> GetActiveStaffAsync()
         {
             var staff = new List<StaffDto>();
-            
+
             using var connection = new SqliteConnection(_connectionString);
             await connection.OpenAsync();
-            
+
             var command = connection.CreateCommand();
             command.CommandText = @"
                 SELECT Id, FirstName, LastName, Email, Phone, DailyCode, 
@@ -274,7 +116,7 @@ namespace PottaAPI.Services
                 FROM Staff 
                 WHERE IsActive = 1
                 ORDER BY FirstName, LastName";
-            
+
             using var reader = await command.ExecuteReaderAsync();
             while (await reader.ReadAsync())
             {
@@ -291,7 +133,7 @@ namespace PottaAPI.Services
                     IsActive = Convert.ToBoolean(reader["IsActive"] ?? true)
                 });
             }
-            
+
             return staff;
         }
 
@@ -299,7 +141,7 @@ namespace PottaAPI.Services
         {
             using var connection = new SqliteConnection(_connectionString);
             await connection.OpenAsync();
-            
+
             var command = connection.CreateCommand();
             command.CommandText = @"
                 SELECT Id, FirstName, LastName, Email, Phone, DailyCode, 
@@ -307,7 +149,7 @@ namespace PottaAPI.Services
                 FROM Staff 
                 WHERE DailyCode = @code AND IsActive = 1";
             command.Parameters.AddWithValue("@code", dailyCode);
-            
+
             using var reader = await command.ExecuteReaderAsync();
             if (await reader.ReadAsync())
             {
@@ -324,329 +166,17 @@ namespace PottaAPI.Services
                     IsActive = Convert.ToBoolean(reader["IsActive"] ?? true)
                 };
             }
-            
+
             return null;
         }
 
-        public async Task<List<TableDto>> GetTablesAsync()
-        {
-            var tables = new List<TableDto>();
-            
-            using var connection = new SqliteConnection(_connectionString);
-            await connection.OpenAsync();
-            
-            var command = connection.CreateCommand();
-            command.CommandText = @"
-                SELECT tableId, tableName, tableNumber, capacity, status,
-                       currentCustomerId, currentTransactionId, description, isActive
-                FROM Tables 
-                WHERE isActive = 1
-                ORDER BY tableNumber";
-            
-            using var reader = await command.ExecuteReaderAsync();
-            while (await reader.ReadAsync())
-            {
-                tables.Add(new TableDto
-                {
-                    TableId = reader["tableId"]?.ToString() ?? "",
-                    TableName = reader["tableName"]?.ToString() ?? "",
-                    TableNumber = Convert.ToInt32(reader["tableNumber"] ?? 0),
-                    Capacity = Convert.ToInt32(reader["capacity"] ?? 4),
-                    Status = reader["status"]?.ToString() ?? "Available",
-                    CurrentCustomerId = reader["currentCustomerId"]?.ToString(),
-                    CurrentTransactionId = reader["currentTransactionId"]?.ToString(),
-                    Description = reader["description"]?.ToString() ?? "",
-                    IsActive = Convert.ToBoolean(reader["isActive"] ?? true)
-                });
-            }
-            
-            return tables;
-        }
-
-        public async Task<bool> UpdateTableStatusAsync(string tableId, string status, string? customerId = null)
-        {
-            using var connection = new SqliteConnection(_connectionString);
-            await connection.OpenAsync();
-            
-            var command = connection.CreateCommand();
-            command.CommandText = @"
-                UPDATE Tables 
-                SET status = @status, 
-                    currentCustomerId = @customerId,
-                    modifiedDate = CURRENT_TIMESTAMP
-                WHERE tableId = @tableId";
-            
-            command.Parameters.AddWithValue("@status", status);
-            command.Parameters.AddWithValue("@customerId", customerId ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("@tableId", tableId);
-            
-            var rowsAffected = await command.ExecuteNonQueryAsync();
-            return rowsAffected > 0;
-        }
-
-        public async Task<List<CustomerDto>> GetCustomersAsync()
-        {
-            var customers = new List<CustomerDto>();
-            
-            using var connection = new SqliteConnection(_connectionString);
-            await connection.OpenAsync();
-            
-            var command = connection.CreateCommand();
-            command.CommandText = @"
-                SELECT customerId, firstName, lastName, email, phone, 
-                       address, city, state, country, isActive
-                FROM Customer 
-                WHERE isActive = 1
-                ORDER BY firstName, lastName";
-            
-            using var reader = await command.ExecuteReaderAsync();
-            while (await reader.ReadAsync())
-            {
-                customers.Add(new CustomerDto
-                {
-                    CustomerId = reader["customerId"]?.ToString() ?? "",
-                    FirstName = reader["firstName"]?.ToString() ?? "",
-                    LastName = reader["lastName"]?.ToString() ?? "",
-                    Email = reader["email"]?.ToString() ?? "",
-                    Phone = reader["phone"]?.ToString() ?? "",
-                    Address = reader["address"]?.ToString() ?? "",
-                    City = reader["city"]?.ToString() ?? "",
-                    State = reader["state"]?.ToString() ?? "",
-                    Country = reader["country"]?.ToString() ?? "",
-                    IsActive = Convert.ToBoolean(reader["isActive"] ?? true)
-                });
-            }
-            
-            return customers;
-        }
-
-        public async Task<CustomerDto?> GetCustomerByIdAsync(string customerId)
-        {
-            using var connection = new SqliteConnection(_connectionString);
-            await connection.OpenAsync();
-            
-            var command = connection.CreateCommand();
-            command.CommandText = @"
-                SELECT customerId, firstName, lastName, email, phone, 
-                       address, city, state, country, isActive
-                FROM Customer 
-                WHERE customerId = @customerId AND isActive = 1";
-            command.Parameters.AddWithValue("@customerId", customerId);
-            
-            using var reader = await command.ExecuteReaderAsync();
-            if (await reader.ReadAsync())
-            {
-                return new CustomerDto
-                {
-                    CustomerId = reader["customerId"]?.ToString() ?? "",
-                    FirstName = reader["firstName"]?.ToString() ?? "",
-                    LastName = reader["lastName"]?.ToString() ?? "",
-                    Email = reader["email"]?.ToString() ?? "",
-                    Phone = reader["phone"]?.ToString() ?? "",
-                    Address = reader["address"]?.ToString() ?? "",
-                    City = reader["city"]?.ToString() ?? "",
-                    State = reader["state"]?.ToString() ?? "",
-                    Country = reader["country"]?.ToString() ?? "",
-                    IsActive = Convert.ToBoolean(reader["isActive"] ?? true)
-                };
-            }
-            
-            return null;
-        }
-
-        public async Task<string> CreateWaitingTransactionAsync(CreateWaitingTransactionDto transaction)
-        {
-            return await Task.Run(() =>
-            {
-                try
-                {
-                    // Generate transaction ID like the POS system does
-                    var transactionId = "M" + DateTime.Now.ToString("yyyyMMddHHmmss");
-
-                    var sql = @"
-                        INSERT INTO WaitingTransactions (TransactionId, CartItems, CustomerId, TableId, TableNumber, TableName, StaffId, CreatedDate, ModifiedDate) 
-                        VALUES (@TransactionId, @CartItems, @CustomerId, @TableId, @TableNumber, @TableName, @StaffId, @CreatedDate, @ModifiedDate)";
-
-                    var parameters = new SqliteParameter[]
-                    {
-                        new SqliteParameter("@TransactionId", transactionId),
-                        new SqliteParameter("@CartItems", JsonSerializer.Serialize(transaction.Items ?? new List<WaitingTransactionItemDto>())),
-                        new SqliteParameter("@CustomerId", transaction.CustomerId ?? (object)DBNull.Value),
-                        new SqliteParameter("@TableId", transaction.TableId ?? (object)DBNull.Value),
-                        new SqliteParameter("@TableNumber", transaction.TableNumber ?? (object)DBNull.Value),
-                        new SqliteParameter("@TableName", transaction.TableName ?? (object)DBNull.Value),
-                        new SqliteParameter("@StaffId", transaction.StaffId),
-                        new SqliteParameter("@CreatedDate", DateTime.Now),
-                        new SqliteParameter("@ModifiedDate", DateTime.Now)
-                    };
-
-                    using var connection = new SqliteConnection(_connectionString);
-                    connection.Open();
-                    using var command = connection.CreateCommand();
-                    command.CommandText = sql;
-                    command.Parameters.AddRange(parameters);
-                    
-                    int result = command.ExecuteNonQuery();
-                    Console.WriteLine($"Waiting transaction saved (ID: {transactionId}). Rows affected: {result}");
-                    return transactionId;
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Error saving waiting transaction: {ex.Message}");
-                    throw new Exception($"Failed to save waiting transaction: {ex.Message}");
-                }
-            });
-        }
-
-        public async Task<List<WaitingTransactionDto>> GetWaitingTransactionsAsync(int? staffId = null)
-        {
-            return await Task.Run(() =>
-            {
-                var transactions = new List<WaitingTransactionDto>();
-                try
-                {
-                    var sql = @"
-                        SELECT TransactionId, CartItems, CustomerId, TableId, TableNumber, TableName, StaffId, CreatedDate, ModifiedDate
-                        FROM WaitingTransactions";
-
-                    if (staffId.HasValue)
-                    {
-                        sql += " WHERE StaffId = @StaffId";
-                    }
-
-                    sql += " ORDER BY CreatedDate DESC";
-
-                    using var connection = new SqliteConnection(_connectionString);
-                    connection.Open();
-                    using var command = connection.CreateCommand();
-                    command.CommandText = sql;
-
-                    if (staffId.HasValue)
-                    {
-                        command.Parameters.AddWithValue("@StaffId", staffId.Value);
-                    }
-
-                    using var reader = command.ExecuteReader();
-
-                    Console.WriteLine($"Retrieved waiting transactions from database");
-
-                    while (reader.Read())
-                    {
-                        try
-                        {
-                            var customerId = reader["CustomerId"] != DBNull.Value && !string.IsNullOrEmpty(reader["CustomerId"]?.ToString())
-                                ? reader["CustomerId"].ToString()
-                                : null;
-
-                            var itemsJson = reader["CartItems"]?.ToString() ?? "[]";
-                            var items = JsonSerializer.Deserialize<List<WaitingTransactionItemDto>>(itemsJson) ?? new List<WaitingTransactionItemDto>();
-
-                            var transaction = new WaitingTransactionDto
-                            {
-                                TransactionId = reader["TransactionId"]?.ToString() ?? "",
-                                CustomerId = customerId,
-                                TableId = reader["TableId"] != DBNull.Value ? reader["TableId"]?.ToString() : null,
-                                TableNumber = reader["TableNumber"] != DBNull.Value ? Convert.ToInt32(reader["TableNumber"]) : null,
-                                TableName = reader.IsDBNull(5) ? null : reader.GetString(5),
-                                StaffId = reader.IsDBNull(6) ? (int?)null : reader.GetInt32(6),
-                                CreatedDate = reader.GetDateTime(7),
-                                ModifiedDate = reader.GetDateTime(8),
-                                Status = "Pending"
-                            };
-
-                            if (!string.IsNullOrEmpty(transaction.TransactionId))
-                            {
-                                transactions.Add(transaction);
-                                Console.WriteLine($"Loaded waiting transaction: ID={transaction.TransactionId}, CustomerId={customerId}, TableId={transaction.TableId}");
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            Console.WriteLine($"Error creating waiting transaction from row: {ex.Message}");
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Error getting all waiting transactions: {ex.Message}");
-                    throw new Exception($"Failed to get waiting transactions: {ex.Message}");
-                }
-
-                Console.WriteLine($"Returning {transactions.Count} valid waiting transactions");
-                return transactions;
-            });
-        }
-
-        public async Task<bool> UpdateWaitingTransactionStatusAsync(string transactionId, string status)
-        {
-            return await Task.Run(() =>
-            {
-                try
-                {
-                    var sql = @"
-                        UPDATE WaitingTransactions 
-                        SET ModifiedDate = @modifiedDate 
-                        WHERE TransactionId = @transactionId";
-
-                    var parameters = new SqliteParameter[]
-                    {
-                        new SqliteParameter("@modifiedDate", DateTime.Now),
-                        new SqliteParameter("@transactionId", transactionId)
-                    };
-
-                    using var connection = new SqliteConnection(_connectionString);
-                    connection.Open();
-                    using var command = connection.CreateCommand();
-                    command.CommandText = sql;
-                    command.Parameters.AddRange(parameters);
-
-                    int result = command.ExecuteNonQuery();
-                    Console.WriteLine($"Waiting transaction updated (ID: {transactionId}). Rows affected: {result}");
-                    return result > 0;
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Error updating waiting transaction (ID: {transactionId}): {ex.Message}");
-                    throw new Exception($"Failed to update waiting transaction: {ex.Message}");
-                }
-            });
-        }
-
-        public async Task<bool> DeleteWaitingTransactionAsync(string transactionId)
-        {
-            return await Task.Run(() =>
-            {
-                try
-                {
-                    var sql = "DELETE FROM WaitingTransactions WHERE TransactionId = @transactionId";
-                    var parameters = new SqliteParameter[]
-                    {
-                        new SqliteParameter("@transactionId", transactionId)
-                    };
-
-                    using var connection = new SqliteConnection(_connectionString);
-                    connection.Open();
-                    using var command = connection.CreateCommand();
-                    command.CommandText = sql;
-                    command.Parameters.AddRange(parameters);
-
-                    int result = command.ExecuteNonQuery();
-                    Console.WriteLine($"Waiting transaction deleted. Rows affected: {result}");
-                    return result > 0;
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Error deleting waiting transaction: {ex.Message}");
-                    throw new Exception($"Failed to delete waiting transaction: {ex.Message}");
-                }
-            });
-        }
+        // Table operations moved to TableService.cs
 
         public async Task<SyncInfoDto> GetLastSyncInfoAsync()
         {
             using var connection = new SqliteConnection(_connectionString);
             await connection.OpenAsync();
-            
+
             var command = connection.CreateCommand();
             command.CommandText = @"
                 SELECT 
@@ -659,7 +189,7 @@ namespace PottaAPI.Services
                     (SELECT COUNT(*) FROM Customer WHERE isActive = 1) as CustomerCount,
                     (SELECT COUNT(*) FROM WaitingTransactions) as WaitingTransactionCount,
                     CURRENT_TIMESTAMP as LastSync";
-            
+
             using var reader = await command.ExecuteReaderAsync();
             if (await reader.ReadAsync())
             {
@@ -676,53 +206,160 @@ namespace PottaAPI.Services
                     LastSync = DateTime.Parse(reader["LastSync"]?.ToString() ?? DateTime.Now.ToString())
                 };
             }
-            
+
             return new SyncInfoDto();
         }
 
-        private async Task<List<BundleComponentDto>> GetBundleComponentsAsync(string bundleId)
+        public async Task<DetailedSyncInfoDto> GetDetailedSyncInfoAsync()
         {
-            var components = new List<BundleComponentDto>();
-            
-            using var connection = new SqliteConnection(_connectionString);
-            await connection.OpenAsync();
-            
-            var command = connection.CreateCommand();
-            command.CommandText = @"
-                SELECT bc.productId, bc.quantity, p.name as productName, p.salesPrice
-                FROM BundleComponents bc
-                INNER JOIN Products p ON bc.productId = p.productId
-                WHERE bc.bundleId = @bundleId AND p.status = 1";
-            command.Parameters.AddWithValue("@bundleId", bundleId);
-            
-            using var reader = await command.ExecuteReaderAsync();
-            while (await reader.ReadAsync())
+            var basicInfo = await GetLastSyncInfoAsync();
+
+            return new DetailedSyncInfoDto
             {
-                components.Add(new BundleComponentDto
+                ProductCount = basicInfo.ProductCount,
+                BundleCount = basicInfo.BundleCount,
+                VariationCount = basicInfo.VariationCount,
+                CategoryCount = basicInfo.CategoryCount,
+                TableCount = basicInfo.TableCount,
+                StaffCount = basicInfo.StaffCount,
+                CustomerCount = basicInfo.CustomerCount,
+                WaitingTransactionCount = basicInfo.WaitingTransactionCount,
+                LastSync = basicInfo.LastSync,
+                DatabaseStats = await GetDatabaseStatisticsAsync(),
+                InventoryStats = await GetInventoryStatisticsAsync(),
+                TableStats = await GetTableStatisticsAsync(),
+                TransactionStats = new TransactionStatistics
                 {
-                    ProductId = reader["productId"]?.ToString() ?? "",
-                    ProductName = reader["productName"]?.ToString() ?? "",
-                    Quantity = Convert.ToInt32(reader["quantity"] ?? 1),
-                    Price = Convert.ToDecimal(reader["salesPrice"] ?? 0)
-                });
-            }
-            
-            return components;
+                    PendingTransactions = basicInfo.WaitingTransactionCount,
+                    CompletedTransactions = 0,
+                    TotalTransactionValue = 0,
+                    OldestPendingTransaction = await GetOldestPendingTransactionDateAsync()
+                }
+            };
         }
 
-        private List<string> ParseCategories(string? categoriesJson)
+        public async Task<DatabaseStatistics> GetDatabaseStatisticsAsync()
         {
-            if (string.IsNullOrEmpty(categoriesJson))
-                return new List<string>();
-            
-            try
+            using var connection = new SqliteConnection(_connectionString);
+            await connection.OpenAsync();
+
+            // Get database file info
+            var dbPath = connection.DataSource;
+            var fileInfo = new FileInfo(dbPath);
+
+            // Get table count
+            var command = connection.CreateCommand();
+            command.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table'";
+            var tableCount = Convert.ToInt32(await command.ExecuteScalarAsync() ?? 0);
+
+            return new DatabaseStatistics
             {
-                return JsonSerializer.Deserialize<List<string>>(categoriesJson) ?? new List<string>();
-            }
-            catch
-            {
-                return new List<string>();
-            }
+                DatabaseSizeBytes = fileInfo.Exists ? fileInfo.Length : 0,
+                DatabaseSizeFormatted = FormatBytes(fileInfo.Exists ? fileInfo.Length : 0),
+                DatabasePath = dbPath,
+                TotalTables = tableCount,
+                DatabaseCreatedDate = fileInfo.Exists ? fileInfo.CreationTime : DateTime.MinValue,
+                DatabaseModifiedDate = fileInfo.Exists ? fileInfo.LastWriteTime : DateTime.MinValue
+            };
         }
+
+        public async Task<InventoryStatistics> GetInventoryStatisticsAsync()
+        {
+            using var connection = new SqliteConnection(_connectionString);
+            await connection.OpenAsync();
+
+            var command = connection.CreateCommand();
+            command.CommandText = @"
+                SELECT 
+                    COUNT(CASE WHEN inventoryOnHand <= 10 AND inventoryOnHand > 0 THEN 1 END) as LowStock,
+                    COUNT(CASE WHEN inventoryOnHand = 0 THEN 1 END) as OutOfStock,
+                    COALESCE(SUM(CASE WHEN status = 1 THEN cost * inventoryOnHand ELSE 0 END), 0) as TotalValue,
+                    COUNT(CASE WHEN taxable = 1 AND status = 1 THEN 1 END) as TaxableCount,
+                    COUNT(CASE WHEN taxable = 0 AND status = 1 THEN 1 END) as NonTaxableCount
+                FROM Products
+                WHERE status = 1";
+
+            using var reader = await command.ExecuteReaderAsync();
+            if (await reader.ReadAsync())
+            {
+                return new InventoryStatistics
+                {
+                    LowStockItems = Convert.ToInt32(reader["LowStock"] ?? 0),
+                    OutOfStockItems = Convert.ToInt32(reader["OutOfStock"] ?? 0),
+                    TotalInventoryValue = Convert.ToDecimal(reader["TotalValue"] ?? 0),
+                    TaxableItems = Convert.ToInt32(reader["TaxableCount"] ?? 0),
+                    NonTaxableItems = Convert.ToInt32(reader["NonTaxableCount"] ?? 0)
+                };
+            }
+
+            return new InventoryStatistics();
+        }
+
+        public async Task<TableStatistics> GetTableStatisticsAsync()
+        {
+            using var connection = new SqliteConnection(_connectionString);
+            await connection.OpenAsync();
+
+            var command = connection.CreateCommand();
+            command.CommandText = @"
+                SELECT 
+                    COUNT(CASE WHEN status = 'Available' THEN 1 END) as Available,
+                    COUNT(CASE WHEN status = 'Occupied' THEN 1 END) as Occupied,
+                    COUNT(CASE WHEN status = 'Reserved' THEN 1 END) as Reserved,
+                    COUNT(*) as Total
+                FROM Tables
+                WHERE isActive = 1";
+
+            using var reader = await command.ExecuteReaderAsync();
+            if (await reader.ReadAsync())
+            {
+                var available = Convert.ToInt32(reader["Available"] ?? 0);
+                var occupied = Convert.ToInt32(reader["Occupied"] ?? 0);
+                var reserved = Convert.ToInt32(reader["Reserved"] ?? 0);
+                var total = Convert.ToInt32(reader["Total"] ?? 0);
+
+                return new TableStatistics
+                {
+                    AvailableTables = available,
+                    OccupiedTables = occupied,
+                    ReservedTables = reserved,
+                    OccupancyRate = total > 0 ? (double)occupied / total * 100 : 0
+                };
+            }
+
+            return new TableStatistics();
+        }
+
+        private async Task<DateTime?> GetOldestPendingTransactionDateAsync()
+        {
+            using var connection = new SqliteConnection(_connectionString);
+            await connection.OpenAsync();
+
+            var command = connection.CreateCommand();
+            command.CommandText = "SELECT MIN(CreatedDate) FROM WaitingTransactions";
+            var result = await command.ExecuteScalarAsync();
+
+            if (result != null && result != DBNull.Value)
+            {
+                return Convert.ToDateTime(result);
+            }
+
+            return null;
+        }
+
+        private string FormatBytes(long bytes)
+        {
+            string[] sizes = { "B", "KB", "MB", "GB", "TB" };
+            double len = bytes;
+            int order = 0;
+            while (len >= 1024 && order < sizes.Length - 1)
+            {
+                order++;
+                len = len / 1024;
+            }
+            return $"{len:0.##} {sizes[order]}";
+        }
+
+
     }
 }

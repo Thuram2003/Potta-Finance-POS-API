@@ -41,43 +41,7 @@ namespace PottaAPI.Controllers
             }
         }
 
-        /// <summary>
-        /// Get complete data for mobile app synchronization
-        /// </summary>
-        [HttpGet("full")]
-        public async Task<ActionResult<ApiResponseDto<SyncDataDto>>> GetFullSyncData()
-        {
-            try
-            {
-                var syncData = new SyncDataDto
-                {
-                    MenuItems = await _databaseService.GetMenuItemsAsync(),
-                    BundleItems = await _databaseService.GetBundleItemsAsync(),
-                    ProductVariations = await _databaseService.GetProductVariationsAsync(),
-                    Categories = await _databaseService.GetCategoriesAsync(),
-                    Tables = await _databaseService.GetTablesAsync(),
-                    Staff = await _databaseService.GetActiveStaffAsync(),
-                    Customers = await _databaseService.GetCustomersAsync(),
-                    SyncInfo = await _databaseService.GetLastSyncInfoAsync()
-                };
-
-                return Ok(new ApiResponseDto<SyncDataDto>
-                {
-                    Success = true,
-                    Message = "Full sync data retrieved successfully",
-                    Data = syncData
-                });
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, new ErrorResponseDto
-                {
-                    Error = "Failed to retrieve sync data",
-                    Details = ex.Message
-                });
-            }
-        }
-
+        
         /// <summary>
         /// Health check endpoint for mobile apps
         /// </summary>

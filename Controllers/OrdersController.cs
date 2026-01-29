@@ -4,15 +4,19 @@ using PottaAPI.Services;
 
 namespace PottaAPI.Controllers
 {
+    /// <summary>
+    /// Controller for managing orders/waiting transactions
+    /// Matches the WPF app's WaitingTransaction functionality
+    /// </summary>
     [ApiController]
     [Route("api/[controller]")]
     public class OrdersController : ControllerBase
     {
-        private readonly IDatabaseService _databaseService;
+        private readonly IOrderService _orderService;
 
-        public OrdersController(IDatabaseService databaseService)
+        public OrdersController(IOrderService orderService)
         {
-            _databaseService = databaseService;
+            _orderService = orderService;
         }
 
         /// <summary>
@@ -77,7 +81,7 @@ namespace PottaAPI.Controllers
                     });
                 }
 
-                var transactionId = await _databaseService.CreateWaitingTransactionAsync(order);
+                var transactionId = await _orderService.CreateWaitingTransactionAsync(order);
 
                 return Ok(new ApiResponseDto<string>
                 {
@@ -104,7 +108,7 @@ namespace PottaAPI.Controllers
         {
             try
             {
-                var transactions = await _databaseService.GetWaitingTransactionsAsync(staffId);
+                var transactions = await _orderService.GetWaitingTransactionsAsync(staffId);
                 
                 if (transactions == null)
                 {
@@ -161,7 +165,7 @@ namespace PottaAPI.Controllers
                     });
                 }
 
-                var success = await _databaseService.UpdateWaitingTransactionStatusAsync(transactionId, request.Status);
+                var success = await _orderService.UpdateWaitingTransactionStatusAsync(transactionId, request.Status);
 
                 if (!success)
                 {
@@ -206,7 +210,7 @@ namespace PottaAPI.Controllers
                     });
                 }
 
-                var success = await _databaseService.DeleteWaitingTransactionAsync(transactionId);
+                var success = await _orderService.DeleteWaitingTransactionAsync(transactionId);
 
                 if (!success)
                 {
@@ -242,7 +246,7 @@ namespace PottaAPI.Controllers
         {
             try
             {
-                var allTransactions = await _databaseService.GetWaitingTransactionsAsync();
+                var allTransactions = await _orderService.GetWaitingTransactionsAsync();
                 var pendingOrders = allTransactions.Where(t => t.Status == "Pending").ToList();
                 
                 return Ok(new ApiResponseDto<List<WaitingTransactionDto>>
@@ -257,6 +261,204 @@ namespace PottaAPI.Controllers
                 return StatusCode(500, new ErrorResponseDto
                 {
                     Error = "Failed to retrieve pending orders",
+                    Details = ex.Message
+                });
+            }
+        }
+
+        /// <summary>
+        /// Get a specific waiting transaction by ID
+        /// </summary>
+        [HttpGet("waiting/{transactionId}")]
+        public async Task<ActionResult<ApiResponseDto<WaitingTransactionDto>>> GetWaitingTransactionById(string transactionId)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(transactionId))
+                {
+                    return BadRequest(new ErrorResponseDto
+                    {
+                        Error = "Transaction ID is required",
+                        Details = "TransactionId cannot be empty"
+                    });
+                }
+
+                var transaction = await _orderService.GetWaitingTransactionByIdAsync(transactionId);
+
+                if (transaction == null)
+                {
+                    return NotFound(new ErrorResponseDto
+                    {
+                        Error = "Transaction not found",
+                        Details = $"No waiting transaction found with ID: {transactionId}"
+                    });
+                }
+
+                return Ok(new ApiResponseDto<WaitingTransactionDto>
+                {
+                    Success = true,
+                    Message = "Transaction retrieved successfully",
+                    Data = transaction
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new ErrorResponseDto
+                {
+                    Error = "Failed to retrieve transaction",
+                    Details = ex.Message
+                });
+            }
+        }
+
+        /// <summary>
+        /// Get order statistics
+        /// </summary>
+        [HttpGet("statistics")]
+        public async Task<ActionResult<ApiResponseDto<OrderStatisticsDto>>> GetOrderStatistics()
+        {
+            try
+            {
+                var statistics = await _orderService.GetOrderStatisticsAsync();
+
+                return Ok(new ApiResponseDto<OrderStatisticsDto>
+                {
+                    Success = true,
+                    Message = "Order statistics retrieved successfully",
+                    Data = statistics
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new ErrorResponseDto
+                {
+                    Error = "Failed to retrieve order statistics",
+                    Details = ex.Message
+                });
+            }
+        }
+
+        /// <summary>
+        /// Get order summary by staff
+        /// </summary>
+        [HttpGet("summary/staff")]
+        public async Task<ActionResult<ApiResponseDto<List<StaffOrderSummaryDto>>>> GetStaffOrderSummary()
+        {
+            try
+            {
+                var summary = await _orderService.GetStaffOrderSummaryAsync();
+
+                return Ok(new ApiResponseDto<List<StaffOrderSummaryDto>>
+                {
+                    Success = true,
+                    Message = $"Retrieved order summary for {summary.Count} staff members",
+                    Data = summary
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new ErrorResponseDto
+                {
+                    Error = "Failed to retrieve staff order summary",
+                    Details = ex.Message
+                });
+            }
+        }
+
+        /// <summary>
+        /// Get order summary by table
+        /// </summary>
+        [HttpGet("summary/tables")]
+        public async Task<ActionResult<ApiResponseDto<List<TableOrderSummaryDto>>>> GetTableOrderSummary()
+        {
+            try
+            {
+                var summary = await _orderService.GetTableOrderSummaryAsync();
+
+                return Ok(new ApiResponseDto<List<TableOrderSummaryDto>>
+                {
+                    Success = true,
+                    Message = $"Retrieved order summary for {summary.Count} tables",
+                    Data = summary
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new ErrorResponseDto
+                {
+                    Error = "Failed to retrieve table order summary",
+                    Details = ex.Message
+                });
+            }
+        }
+
+        /// <summary>
+        /// Get orders for a specific table
+        /// </summary>
+        [HttpGet("table/{tableId}")]
+        public async Task<ActionResult<ApiResponseDto<List<WaitingTransactionDto>>>> GetOrdersByTable(string tableId)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(tableId))
+                {
+                    return BadRequest(new ErrorResponseDto
+                    {
+                        Error = "Table ID is required",
+                        Details = "TableId cannot be empty"
+                    });
+                }
+
+                var orders = await _orderService.GetOrdersByTableAsync(tableId);
+
+                return Ok(new ApiResponseDto<List<WaitingTransactionDto>>
+                {
+                    Success = true,
+                    Message = $"Retrieved {orders.Count} orders for table",
+                    Data = orders
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new ErrorResponseDto
+                {
+                    Error = "Failed to retrieve orders by table",
+                    Details = ex.Message
+                });
+            }
+        }
+
+        /// <summary>
+        /// Get orders for a specific customer
+        /// </summary>
+        [HttpGet("customer/{customerId}")]
+        public async Task<ActionResult<ApiResponseDto<List<WaitingTransactionDto>>>> GetOrdersByCustomer(string customerId)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(customerId))
+                {
+                    return BadRequest(new ErrorResponseDto
+                    {
+                        Error = "Customer ID is required",
+                        Details = "CustomerId cannot be empty"
+                    });
+                }
+
+                var orders = await _orderService.GetOrdersByCustomerAsync(customerId);
+
+                return Ok(new ApiResponseDto<List<WaitingTransactionDto>>
+                {
+                    Success = true,
+                    Message = $"Retrieved {orders.Count} orders for customer",
+                    Data = orders
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new ErrorResponseDto
+                {
+                    Error = "Failed to retrieve orders by customer",
                     Details = ex.Message
                 });
             }
