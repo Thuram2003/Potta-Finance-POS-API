@@ -60,6 +60,20 @@ builder.Services.AddSingleton<ITableService>(provider =>
     return new TableService(connectionStringProvider.GetConnectionString());
 });
 
+// Register staff services
+builder.Services.AddSingleton<IStaffService>(provider =>
+{
+    var connectionStringProvider = provider.GetRequiredService<IConnectionStringProvider>();
+    return new StaffService(connectionStringProvider.GetConnectionString());
+});
+
+// Register floor plan services
+builder.Services.AddSingleton<IFloorPlanService>(provider =>
+{
+    var connectionStringProvider = provider.GetRequiredService<IConnectionStringProvider>();
+    return new FloorPlanService(connectionStringProvider.GetConnectionString());
+});
+
 var app = builder.Build();
 
 // Get and display the server IP address
@@ -67,18 +81,9 @@ string serverIpAddress = GetServerIPAddress();
 Console.WriteLine($"Server IP Address: {serverIpAddress}");
 
 // Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-
-    app.UseSwaggerUI(Theme.Dark);
-
-    // Theme switcher (would allow switching to light/other modes)
-    // app.UseSwaggerUI(Theme.Dark, options =>
-    // {
-    //     options.EnableThemeSwitcher();  // ← This would enable light/dark toggle
-    // });
-}
+// Enable Swagger in all environments (development and production)
+app.UseSwagger();
+app.UseSwaggerUI(Theme.Dark);
 
 // Redirect root URL to Swagger UI (must be before static files/dir browser)
 app.Use(async (context, next) =>

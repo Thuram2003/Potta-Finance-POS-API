@@ -6,7 +6,6 @@ namespace PottaAPI.Services
 {
     /// <summary>
     /// Service for managing orders/waiting transactions
-    /// Implements the same logic as the WPF app's WaitingTransaction functionality
     /// </summary>
     public class OrderService : IOrderService
     {
@@ -194,12 +193,7 @@ namespace PottaAPI.Services
                     {
                         var itemsJson = reader["CartItems"]?.ToString() ?? "[]";
                         
-                        // Deserialize with exact property names (matches WPF app)
-                        var jsonOptions = new JsonSerializerOptions
-                        {
-                            PropertyNamingPolicy = null
-                        };
-                        
+                        var jsonOptions = new JsonSerializerOptions { PropertyNamingPolicy = null };
                         var items = JsonSerializer.Deserialize<List<WaitingTransactionItemDto>>(itemsJson, jsonOptions) 
                             ?? new List<WaitingTransactionItemDto>();
 
@@ -237,6 +231,8 @@ namespace PottaAPI.Services
                 }
             });
         }
+
+
 
         public async Task<bool> UpdateWaitingTransactionStatusAsync(string transactionId, string status)
         {
@@ -304,260 +300,7 @@ namespace PottaAPI.Services
             });
         }
 
-        public async Task<List<WaitingTransactionDto>> GetPendingOrdersAsync()
-        {
-            var allTransactions = await GetWaitingTransactionsAsync();
-            return allTransactions.Where(t => t.Status == "Pending").ToList();
-        }
 
-        public async Task<OrderStatisticsDto> GetOrderStatisticsAsync()
-        {
-            return await Task.Run(() =>
-            {
-                try
-                {
-                    using var connection = new SqliteConnection(_connectionString);
-                    connection.Open();
-
-                    var command = connection.CreateCommand();
-                    command.CommandText = @"
-                        SELECT 
-                            COUNT(*) as TotalOrders,
-                            COUNT(CASE WHEN Status = 'Pending' THEN 1 END) as PendingOrders,
-                            COUNT(CASE WHEN Status = 'Completed' THEN 1 END) as CompletedOrders,
-                            MIN(CreatedDate) as OldestPending,
-                            MAX(CreatedDate) as NewestOrder,
-                            COUNT(CASE WHEN DATE(CreatedDate) = DATE('now') THEN 1 END) as OrdersToday
-                        FROM WaitingTransactions";
-
-                    using var reader = command.ExecuteReader();
-                    if (reader.Read())
-                    {
-                        var stats = new OrderStatisticsDto
-                        {
-                            TotalOrders = Convert.ToInt32(reader["TotalOrders"] ?? 0),
-                            PendingOrders = Convert.ToInt32(reader["PendingOrders"] ?? 0),
-                            CompletedOrders = Convert.ToInt32(reader["CompletedOrders"] ?? 0),
-                            OldestPendingOrder = reader["OldestPending"] != DBNull.Value 
-                                ? Convert.ToDateTime(reader["OldestPending"]) 
-                                : null,
-                            NewestOrder = reader["NewestOrder"] != DBNull.Value 
-                                ? Convert.ToDateTime(reader["NewestOrder"]) 
-                                : null,
-                            OrdersToday = Convert.ToInt32(reader["OrdersToday"] ?? 0)
-                        };
-
-                        // Calculate total order values from actual cart items
-                        reader.Close();
-                        
-                        // Get all transactions to calculate totals
-                        var allTransactionsCommand = connection.CreateCommand();
-                        allTransactionsCommand.CommandText = "SELECT CartItems, CreatedDate FROM WaitingTransactions";
-                        
-                        using var allReader = allTransactionsCommand.ExecuteReader();
-                        decimal totalValue = 0;
-                        decimal todayValue = 0;
-                        var today = DateTime.Today;
-                        var jsonOptions = new JsonSerializerOptions { PropertyNamingPolicy = null };
-                        
-                        while (allReader.Read())
-                        {
-                            var itemsJson = allReader["CartItems"]?.ToString() ?? "[]";
-                            var items = JsonSerializer.Deserialize<List<WaitingTransactionItemDto>>(itemsJson, jsonOptions);
-                            
-                            if (items != null)
-                            {
-                                decimal orderTotal = CalculateOrderTotal(items);
-                                totalValue += orderTotal;
-                                
-                                var createdDate = Convert.ToDateTime(allReader["CreatedDate"]);
-                                if (createdDate.Date == today)
-                                {
-                                    todayValue += orderTotal;
-                                }
-                            }
-                        }
-                        
-                        stats.TotalOrderValue = totalValue;
-                        stats.OrderValueToday = todayValue;
-                        
-                        return stats;
-                    }
-
-                    return new OrderStatisticsDto();
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"❌ Error getting order statistics: {ex.Message}");
-                    throw new Exception($"Failed to get order statistics: {ex.Message}");
-                }
-            });
-        }
-
-        /// <summary>
-        /// Calculate total for an order from cart items (matches WPF app logic)
-        /// </summary>
-        private decimal CalculateOrderTotal(List<WaitingTransactionItemDto> items)
-        {
-            decimal total = 0;
-            foreach (var item in items)
-            {
-                // Base subtotal: (Price × Quantity) - Discount
-                decimal itemSubTotal = (item.Price * item.Quantity) - item.Discount;
-                
-                // Add modifier costs
-                decimal modifierTotal = item.AppliedModifiers?.Sum(m => m.PriceChange) ?? 0;
-                
-                total += itemSubTotal + modifierTotal;
-            }
-            return total;
-        }
-
-        public async Task<List<StaffOrderSummaryDto>> GetStaffOrderSummaryAsync()
-        {
-            return await Task.Run(() =>
-            {
-                var summaries = new List<StaffOrderSummaryDto>();
-                try
-                {
-                    using var connection = new SqliteConnection(_connectionString);
-                    connection.Open();
-
-                    var command = connection.CreateCommand();
-                    command.CommandText = @"
-                        SELECT 
-                            wt.StaffId,
-                            s.FirstName || ' ' || COALESCE(s.LastName, '') as StaffName,
-                            COUNT(*) as TotalOrders,
-                            COUNT(CASE WHEN wt.Status = 'Pending' THEN 1 END) as PendingOrders,
-                            COUNT(CASE WHEN wt.Status = 'Completed' THEN 1 END) as CompletedOrders,
-                            MAX(wt.CreatedDate) as LastOrderDate,
-                            GROUP_CONCAT(wt.CartItems, '|||') as AllCartItems
-                        FROM WaitingTransactions wt
-                        LEFT JOIN Staff s ON wt.StaffId = s.Id
-                        WHERE wt.StaffId IS NOT NULL
-                        GROUP BY wt.StaffId, StaffName
-                        ORDER BY TotalOrders DESC";
-
-                    using var reader = command.ExecuteReader();
-                    var jsonOptions = new JsonSerializerOptions { PropertyNamingPolicy = null };
-                    
-                    while (reader.Read())
-                    {
-                        // Calculate total order value from cart items
-                        decimal totalOrderValue = 0;
-                        var allCartItemsStr = reader["AllCartItems"]?.ToString();
-                        
-                        if (!string.IsNullOrEmpty(allCartItemsStr))
-                        {
-                            var cartItemsArray = allCartItemsStr.Split(new[] { "|||" }, StringSplitOptions.RemoveEmptyEntries);
-                            foreach (var cartItemsJson in cartItemsArray)
-                            {
-                                var items = JsonSerializer.Deserialize<List<WaitingTransactionItemDto>>(cartItemsJson, jsonOptions);
-                                if (items != null)
-                                {
-                                    totalOrderValue += CalculateOrderTotal(items);
-                                }
-                            }
-                        }
-                        
-                        summaries.Add(new StaffOrderSummaryDto
-                        {
-                            StaffId = Convert.ToInt32(reader["StaffId"] ?? 0),
-                            StaffName = reader["StaffName"]?.ToString() ?? "Unknown",
-                            TotalOrders = Convert.ToInt32(reader["TotalOrders"] ?? 0),
-                            PendingOrders = Convert.ToInt32(reader["PendingOrders"] ?? 0),
-                            CompletedOrders = Convert.ToInt32(reader["CompletedOrders"] ?? 0),
-                            LastOrderDate = reader["LastOrderDate"] != DBNull.Value 
-                                ? Convert.ToDateTime(reader["LastOrderDate"]) 
-                                : null,
-                            TotalOrderValue = totalOrderValue
-                        });
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"❌ Error getting staff order summary: {ex.Message}");
-                }
-
-                return summaries;
-            });
-        }
-
-        public async Task<List<TableOrderSummaryDto>> GetTableOrderSummaryAsync()
-        {
-            return await Task.Run(() =>
-            {
-                var summaries = new List<TableOrderSummaryDto>();
-                try
-                {
-                    using var connection = new SqliteConnection(_connectionString);
-                    connection.Open();
-
-                    var command = connection.CreateCommand();
-                    command.CommandText = @"
-                        SELECT 
-                            wt.TableId,
-                            wt.TableName,
-                            wt.TableNumber,
-                            COUNT(*) as ActiveOrders,
-                            MIN(wt.CreatedDate) as FirstOrderTime,
-                            MAX(wt.CreatedDate) as LastOrderTime,
-                            t.status as TableStatus,
-                            GROUP_CONCAT(wt.CartItems, '|||') as AllCartItems
-                        FROM WaitingTransactions wt
-                        LEFT JOIN Tables t ON wt.TableId = t.tableId
-                        WHERE wt.TableId IS NOT NULL AND wt.Status = 'Pending'
-                        GROUP BY wt.TableId, wt.TableName, wt.TableNumber, t.status
-                        ORDER BY ActiveOrders DESC";
-
-                    using var reader = command.ExecuteReader();
-                    var jsonOptions = new JsonSerializerOptions { PropertyNamingPolicy = null };
-                    
-                    while (reader.Read())
-                    {
-                        // Calculate total order value from cart items
-                        decimal totalOrderValue = 0;
-                        var allCartItemsStr = reader["AllCartItems"]?.ToString();
-                        
-                        if (!string.IsNullOrEmpty(allCartItemsStr))
-                        {
-                            var cartItemsArray = allCartItemsStr.Split(new[] { "|||" }, StringSplitOptions.RemoveEmptyEntries);
-                            foreach (var cartItemsJson in cartItemsArray)
-                            {
-                                var items = JsonSerializer.Deserialize<List<WaitingTransactionItemDto>>(cartItemsJson, jsonOptions);
-                                if (items != null)
-                                {
-                                    totalOrderValue += CalculateOrderTotal(items);
-                                }
-                            }
-                        }
-                        
-                        summaries.Add(new TableOrderSummaryDto
-                        {
-                            TableId = reader["TableId"]?.ToString() ?? "",
-                            TableName = reader["TableName"]?.ToString() ?? "",
-                            TableNumber = Convert.ToInt32(reader["TableNumber"] ?? 0),
-                            ActiveOrders = Convert.ToInt32(reader["ActiveOrders"] ?? 0),
-                            FirstOrderTime = reader["FirstOrderTime"] != DBNull.Value 
-                                ? Convert.ToDateTime(reader["FirstOrderTime"]) 
-                                : null,
-                            LastOrderTime = reader["LastOrderTime"] != DBNull.Value 
-                                ? Convert.ToDateTime(reader["LastOrderTime"]) 
-                                : null,
-                            Status = reader["TableStatus"]?.ToString() ?? "Available",
-                            TotalOrderValue = totalOrderValue
-                        });
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"❌ Error getting table order summary: {ex.Message}");
-                }
-
-                return summaries;
-            });
-        }
 
         public async Task<List<WaitingTransactionDto>> GetOrdersByTableAsync(string tableId)
         {

@@ -380,6 +380,72 @@ namespace PottaAPI.Services
 
         #region Product Variation Operations
 
+        public async Task<ProductVariationsWithAttributesDto> GetProductVariationsWithAttributesAsync(string productId)
+        {
+            var result = new ProductVariationsWithAttributesDto
+            {
+                ProductId = productId
+            };
+
+            using var connection = new SqliteConnection(_connectionString);
+            await connection.OpenAsync();
+
+            // Get product name
+            var productCommand = connection.CreateCommand();
+            productCommand.CommandText = "SELECT name FROM Products WHERE productId = @productId";
+            productCommand.Parameters.AddWithValue("@productId", productId);
+            result.ProductName = (await productCommand.ExecuteScalarAsync())?.ToString() ?? "";
+
+            // Get all attributes for this product
+            var attributesCommand = connection.CreateCommand();
+            attributesCommand.CommandText = @"
+                SELECT DISTINCT pa.attributeId, pa.attributeName
+                FROM ProductAttributes pa
+                WHERE pa.productId = @productId
+                ORDER BY pa.attributeName";
+            attributesCommand.Parameters.AddWithValue("@productId", productId);
+
+            using (var attributesReader = await attributesCommand.ExecuteReaderAsync())
+            {
+                while (await attributesReader.ReadAsync())
+                {
+                    var attribute = new ProductAttributeDto
+                    {
+                        AttributeId = attributesReader["attributeId"]?.ToString() ?? "",
+                        AttributeName = attributesReader["attributeName"]?.ToString() ?? ""
+                    };
+
+                    // Get all values for this attribute
+                    var valuesCommand = connection.CreateCommand();
+                    valuesCommand.CommandText = @"
+                        SELECT DISTINCT pav.valueId, pav.valueName
+                        FROM ProductAttributeValues pav
+                        WHERE pav.attributeId = @attributeId
+                        ORDER BY pav.valueName";
+                    valuesCommand.Parameters.AddWithValue("@attributeId", attribute.AttributeId);
+
+                    using (var valuesReader = await valuesCommand.ExecuteReaderAsync())
+                    {
+                        while (await valuesReader.ReadAsync())
+                        {
+                            attribute.Values.Add(new ProductAttributeValueDto
+                            {
+                                ValueId = valuesReader["valueId"]?.ToString() ?? "",
+                                ValueName = valuesReader["valueName"]?.ToString() ?? ""
+                            });
+                        }
+                    }
+
+                    result.Attributes.Add(attribute);
+                }
+            }
+
+            // Get all variations
+            result.Variations = await GetProductVariationsAsync(productId);
+
+            return result;
+        }
+
         public async Task<List<ProductVariationDto>> GetProductVariationsAsync(string productId)
         {
             var variations = new List<ProductVariationDto>();

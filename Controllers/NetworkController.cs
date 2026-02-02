@@ -13,150 +13,50 @@ namespace PottaAPI.Controllers
     public class NetworkController : ControllerBase
     {
         /// <summary>
-        /// Get network information for API discovery
-        /// </summary>
-        [HttpGet("info")]
-        public IActionResult GetNetworkInfo()
-        {
-            var networkInfo = new NetworkInfoDto
-            {
-                LocalIpAddresses = GetLocalIPAddresses(),
-                HostName = Dns.GetHostName(),
-                Port = HttpContext.Request.Host.Port ?? 5001,
-                ApiBaseUrls = GetApiBaseUrls(),
-                MachineName = Environment.MachineName,
-                Timestamp = DateTime.UtcNow
-            };
-
-            return Ok(new ApiResponseDto<NetworkInfoDto>
-            {
-                Success = true,
-                Message = "Network information retrieved successfully",
-                Data = networkInfo
-            });
-        }
-
-        /// <summary>
-        /// Get QR code data for mobile app connection
-        /// </summary>
-        [HttpGet("qr-data")]
-        public IActionResult GetQRCodeData()
-        {
-            var primaryIp = GetPrimaryLocalIPAddress();
-            var port = HttpContext.Request.Host.Port ?? 5001;
-            
-            var qrData = new QRCodeDataDto
-            {
-                ApiUrl = $"http://{primaryIp}:{port}",
-                HostName = Dns.GetHostName(),
-                MachineName = Environment.MachineName,
-                Port = port,
-                Version = "1.0.0",
-                Timestamp = DateTime.UtcNow
-            };
-
-            return Ok(new ApiResponseDto<QRCodeDataDto>
-            {
-                Success = true,
-                Message = "QR code data generated successfully",
-                Data = qrData
-            });
-        }
-
-        /// <summary>
         /// Get QR code data as JSON string (for QR code generation)
+        /// Used by desktop app to generate QR codes for mobile app connection
+        /// Returns clean JSON structure for easy mobile app parsing
         /// </summary>
         [HttpGet("qr-string")]
         public IActionResult GetQRCodeString()
         {
             var primaryIp = GetPrimaryLocalIPAddress();
             var port = HttpContext.Request.Host.Port ?? 5001;
+            var baseUrl = $"http://{primaryIp}:{port}";
             
+            // Clean structure for QR code content (what mobile app will scan)
             var qrData = new
             {
                 type = "pottapos_api",
-                url = $"http://{primaryIp}:{port}",
-                host = Dns.GetHostName(),
-                machine = Environment.MachineName,
+                ip = primaryIp,
                 port = port,
-                version = "1.0.0",
+                url = baseUrl,
+                apiVersion = "1.0.0",
+                serverName = Environment.MachineName,
                 timestamp = DateTime.UtcNow.ToString("o")
             };
 
-            var jsonString = JsonSerializer.Serialize(qrData);
+            var jsonString = JsonSerializer.Serialize(qrData, new JsonSerializerOptions 
+            { 
+                WriteIndented = false // Compact JSON for QR code
+            });
 
+            // Response for desktop app
             return Ok(new
             {
                 success = true,
-                message = "QR code string generated",
+                message = "QR code data generated",
                 qrString = jsonString,
-                displayUrl = $"http://{primaryIp}:{port}"
-            });
-        }
-
-        /// <summary>
-        /// Ping endpoint for network discovery
-        /// </summary>
-        [HttpGet("ping")]
-        public IActionResult Ping()
-        {
-            return Ok(new
-            {
-                success = true,
-                message = "pong",
-                service = "PottaAPI",
-                version = "1.0.0",
-                timestamp = DateTime.UtcNow,
-                ip = GetPrimaryLocalIPAddress(),
-                port = HttpContext.Request.Host.Port ?? 5001
-            });
-        }
-
-        /// <summary>
-        /// Get network interfaces information
-        /// </summary>
-        [HttpGet("interfaces")]
-        public IActionResult GetNetworkInterfaces()
-        {
-            var interfaces = NetworkInterface.GetAllNetworkInterfaces()
-                .Where(ni => ni.OperationalStatus == OperationalStatus.Up)
-                .Select(ni => new NetworkInterfaceDto
+                displayUrl = baseUrl,
+                // Also provide parsed data for convenience
+                data = new
                 {
-                    Name = ni.Name,
-                    Description = ni.Description,
-                    Type = ni.NetworkInterfaceType.ToString(),
-                    Status = ni.OperationalStatus.ToString(),
-                    Speed = ni.Speed,
-                    MacAddress = ni.GetPhysicalAddress().ToString(),
-                    IpAddresses = ni.GetIPProperties().UnicastAddresses
-                        .Where(ip => ip.Address.AddressFamily == AddressFamily.InterNetwork)
-                        .Select(ip => ip.Address.ToString())
-                        .ToList()
-                })
-                .ToList();
-
-            return Ok(new ApiResponseDto<List<NetworkInterfaceDto>>
-            {
-                Success = true,
-                Message = $"Retrieved {interfaces.Count} network interfaces",
-                Data = interfaces
-            });
-        }
-
-        /// <summary>
-        /// Test connection from mobile device
-        /// </summary>
-        [HttpPost("test-connection")]
-        public IActionResult TestConnection([FromBody] TestConnectionDto request)
-        {
-            return Ok(new
-            {
-                success = true,
-                message = "Connection successful",
-                clientIp = HttpContext.Connection.RemoteIpAddress?.ToString(),
-                serverIp = GetPrimaryLocalIPAddress(),
-                receivedFrom = request.DeviceName,
-                timestamp = DateTime.UtcNow
+                    ip = primaryIp,
+                    port = port,
+                    url = baseUrl,
+                    serverName = Environment.MachineName,
+                    apiVersion = "1.0.0"
+                }
             });
         }
 
@@ -212,19 +112,6 @@ namespace PottaAPI.Controllers
             }
 
             return "127.0.0.1";
-        }
-
-        private List<string> GetApiBaseUrls()
-        {
-            var urls = new List<string>();
-            var port = HttpContext.Request.Host.Port ?? 5001;
-
-            foreach (var ip in GetLocalIPAddresses())
-            {
-                urls.Add($"http://{ip}:{port}");
-            }
-
-            return urls;
         }
     }
 }

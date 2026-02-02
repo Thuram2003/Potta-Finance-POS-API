@@ -4,7 +4,6 @@ namespace PottaAPI.Services
 {
     /// <summary>
     /// Interface for order/waiting transaction operations
-    /// Matches the WPF app's WaitingTransaction functionality
     /// </summary>
     public interface IOrderService
     {
@@ -24,42 +23,22 @@ namespace PottaAPI.Services
         Task<WaitingTransactionDto?> GetWaitingTransactionByIdAsync(string transactionId);
 
         /// <summary>
-        /// Update waiting transaction status
+        /// Update waiting transaction status (Pending → Ready → Completed)
         /// </summary>
         Task<bool> UpdateWaitingTransactionStatusAsync(string transactionId, string status);
 
         /// <summary>
-        /// Delete a waiting transaction
+        /// Delete a waiting transaction (order completed)
         /// </summary>
         Task<bool> DeleteWaitingTransactionAsync(string transactionId);
 
         /// <summary>
-        /// Get pending orders only
-        /// </summary>
-        Task<List<WaitingTransactionDto>> GetPendingOrdersAsync();
-
-        /// <summary>
-        /// Get order statistics
-        /// </summary>
-        Task<OrderStatisticsDto> GetOrderStatisticsAsync();
-
-        /// <summary>
-        /// Get order summary by staff
-        /// </summary>
-        Task<List<StaffOrderSummaryDto>> GetStaffOrderSummaryAsync();
-
-        /// <summary>
-        /// Get order summary by table
-        /// </summary>
-        Task<List<TableOrderSummaryDto>> GetTableOrderSummaryAsync();
-
-        /// <summary>
-        /// Get orders for a specific table
+        /// Get orders for a specific table (for waiter apps)
         /// </summary>
         Task<List<WaitingTransactionDto>> GetOrdersByTableAsync(string tableId);
 
         /// <summary>
-        /// Get orders for a specific customer
+        /// Get orders for a specific customer (for customer history)
         /// </summary>
         Task<List<WaitingTransactionDto>> GetOrdersByCustomerAsync(string customerId);
     }

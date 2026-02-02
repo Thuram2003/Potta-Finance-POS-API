@@ -4,131 +4,122 @@ using PottaAPI.Services;
 
 namespace PottaAPI.Controllers
 {
+    /// <summary>
+    /// Staff authentication controller for mobile app
+    /// READ-ONLY: No CRUD operations (staff management is desktop-only)
+    /// </summary>
     [ApiController]
     [Route("api/[controller]")]
     public class StaffController : ControllerBase
     {
-        private readonly IDatabaseService _databaseService;
+        private readonly IStaffService _staffService;
 
-        public StaffController(IDatabaseService databaseService)
+        public StaffController(IStaffService staffService)
         {
-            _databaseService = databaseService;
+            _staffService = staffService;
         }
 
         /// <summary>
-        /// Get all active staff members
+        /// Authenticate staff member using daily code
+        /// POST /api/staff/login
         /// </summary>
-        [HttpGet]
-        public async Task<ActionResult<ApiResponseDto<List<StaffDto>>>> GetActiveStaff()
-        {
-            try
-            {
-                var staff = await _databaseService.GetActiveStaffAsync();
-                return Ok(new ApiResponseDto<List<StaffDto>>
-                {
-                    Success = true,
-                    Message = $"Retrieved {staff.Count} active staff members",
-                    Data = staff
-                });
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, new ErrorResponseDto
-                {
-                    Error = "Failed to retrieve staff",
-                    Details = ex.Message
-                });
-            }
-        }
-
-        /// <summary>
-        /// Validate staff daily code for mobile app login
-        /// </summary>
+        /// <param name="request">Login request with daily code</param>
+        /// <returns>Login response with staff info and session token</returns>
         [HttpPost("login")]
-        public async Task<ActionResult<StaffLoginResponseDto>> ValidateStaffCode([FromBody] StaffLoginDto loginRequest)
+        [ProducesResponseType(typeof(StaffLoginResponse), 200)]
+        [ProducesResponseType(typeof(StaffLoginResponse), 400)]
+        public async Task<ActionResult<StaffLoginResponse>> Login([FromBody] StaffLoginRequest request)
         {
-            try
+            if (string.IsNullOrWhiteSpace(request?.DailyCode))
             {
-                if (string.IsNullOrWhiteSpace(loginRequest.DailyCode))
+                return BadRequest(new StaffLoginResponse
                 {
-                    return BadRequest(new StaffLoginResponseDto
-                    {
-                        Success = false,
-                        Message = "Daily code is required"
-                    });
-                }
-
-                var staff = await _databaseService.ValidateStaffCodeAsync(loginRequest.DailyCode);
-                
-                if (staff == null)
-                {
-                    return Ok(new StaffLoginResponseDto
-                    {
-                        Success = false,
-                        Message = "Invalid daily code"
-                    });
-                }
-
-                // Check if code is expired (older than 24 hours)
-                if (staff.IsCodeExpired)
-                {
-                    return Ok(new StaffLoginResponseDto
-                    {
-                        Success = false,
-                        Message = "Daily code has expired. Please get a new code from the main POS system."
-                    });
-                }
-
-                return Ok(new StaffLoginResponseDto
-                {
-                    Success = true,
-                    Message = $"Welcome, {staff.FullName}!",
-                    Staff = staff
+                    Success = false,
+                    Message = "Daily code is required"
                 });
             }
-            catch (Exception ex)
+
+            var response = await _staffService.LoginWithDailyCodeAsync(request.DailyCode);
+            
+            if (!response.Success)
             {
-                return StatusCode(500, new ErrorResponseDto
-                {
-                    Error = "Failed to validate staff code",
-                    Details = ex.Message
-                });
+                return Ok(response); // Return 200 with success=false for invalid credentials
             }
+
+            return Ok(response);
         }
 
         /// <summary>
-        /// Get staff daily codes (for sync purposes)
+        /// Validate if a daily code is valid and not expired
+        /// GET /api/staff/validate/{code}
         /// </summary>
-        [HttpGet("codes")]
-        public async Task<ActionResult<ApiResponseDto<List<object>>>> GetStaffCodes()
+        /// <param name="code">4-digit daily code</param>
+        /// <returns>Validation response</returns>
+        [HttpGet("validate/{code}")]
+        [ProducesResponseType(typeof(CodeValidationResponse), 200)]
+        public async Task<ActionResult<CodeValidationResponse>> ValidateCode(string code)
         {
-            try
+            if (string.IsNullOrWhiteSpace(code))
             {
-                var staff = await _databaseService.GetActiveStaffAsync();
-                var codes = staff.Select(s => new 
+                return BadRequest(new CodeValidationResponse
                 {
-                    s.Id,
-                    s.FullName,
-                    s.DailyCode,
-                    s.CodeGeneratedDate,
-                    s.IsCodeExpired
-                }).ToList();
+                    IsValid = false,
+                    Message = "Daily code is required"
+                });
+            }
 
-                return Ok(new ApiResponseDto<List<object>>
-                {
-                    Success = true,
-                    Message = $"Retrieved {codes.Count} staff codes",
-                    Data = codes.Cast<object>().ToList()
-                });
-            }
-            catch (Exception ex)
+            var response = await _staffService.ValidateCodeAsync(code);
+            return Ok(response);
+        }
+
+        /// <summary>
+        /// Get QR code data for a specific staff member
+        /// GET /api/staff/qr-data/{staffId}
+        /// </summary>
+        /// <param name="staffId">Staff ID</param>
+        /// <returns>QR code data with JSON string</returns>
+        [HttpGet("qr-data/{staffId}")]
+        [ProducesResponseType(typeof(StaffQRCodeResponse), 200)]
+        [ProducesResponseType(404)]
+        public async Task<ActionResult<StaffQRCodeResponse>> GetQRCodeData(int staffId)
+        {
+            // Get base URL from request
+            var apiUrl = $"{Request.Scheme}://{Request.Host}/api";
+            
+            var response = await _staffService.GetStaffQRCodeDataAsync(staffId, apiUrl);
+            
+            if (!response.Success)
             {
-                return StatusCode(500, new ErrorResponseDto
-                {
-                    Error = "Failed to retrieve staff codes",
-                    Details = ex.Message
-                });
+                return NotFound(response);
             }
+
+            return Ok(response);
+        }
+
+        /// <summary>
+        /// Get staff information by daily code (without logging in)
+        /// GET /api/staff/info/{code}
+        /// </summary>
+        /// <param name="code">4-digit daily code</param>
+        /// <returns>Staff DTO or 404</returns>
+        [HttpGet("info/{code}")]
+        [ProducesResponseType(typeof(StaffDTO), 200)]
+        [ProducesResponseType(404)]
+        public async Task<ActionResult<StaffDTO>> GetStaffByCode(string code)
+        {
+            if (string.IsNullOrWhiteSpace(code))
+            {
+                return BadRequest(new { message = "Daily code is required" });
+            }
+
+            var staff = await _staffService.GetStaffByCodeAsync(code);
+            
+            if (staff == null)
+            {
+                return NotFound(new { message = "Staff member not found" });
+            }
+
+            return Ok(staff);
         }
     }
 }

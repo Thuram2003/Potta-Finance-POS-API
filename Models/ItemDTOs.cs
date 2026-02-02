@@ -68,6 +68,39 @@ namespace PottaAPI.Models
         public string FullDisplayName { get; set; } = "";
         public bool IsLowStock => InventoryOnHand < ReorderPoint && ReorderPoint > 0;
         public string StockInfo => IsLowStock ? $"Low Stock ({InventoryOnHand:F2})" : $"{InventoryOnHand:F2} in stock";
+        
+        // Attribute-value mappings for this variation (attributeId -> valueId)
+        public Dictionary<string, string> AttributeValues { get; set; } = new();
+    }
+
+    /// <summary>
+    /// Product attribute data transfer object (for variation attributes)
+    /// </summary>
+    public class ProductAttributeDto
+    {
+        public string AttributeId { get; set; } = "";
+        public string AttributeName { get; set; } = "";
+        public List<ProductAttributeValueDto> Values { get; set; } = new();
+    }
+
+    /// <summary>
+    /// Product attribute value data transfer object
+    /// </summary>
+    public class ProductAttributeValueDto
+    {
+        public string ValueId { get; set; } = "";
+        public string ValueName { get; set; } = "";
+    }
+
+    /// <summary>
+    /// Product variations with attributes response (for ComboBox UI)
+    /// </summary>
+    public class ProductVariationsWithAttributesDto
+    {
+        public string ProductId { get; set; } = "";
+        public string ProductName { get; set; } = "";
+        public List<ProductAttributeDto> Attributes { get; set; } = new();
+        public List<ProductVariationDto> Variations { get; set; } = new();
     }
 
     /// <summary>

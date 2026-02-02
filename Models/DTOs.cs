@@ -1,32 +1,6 @@
 namespace PottaAPI.Models
 {
-    // Staff DTOs
-    public class StaffDto
-    {
-        public int Id { get; set; }
-        public string FirstName { get; set; } = "";
-        public string LastName { get; set; } = "";
-        public string FullName => $"{FirstName} {LastName}".Trim();
-        public string Email { get; set; } = "";
-        public string Phone { get; set; } = "";
-        public string DailyCode { get; set; } = "";
-        public DateTime CodeGeneratedDate { get; set; }
-        public DateTime CreatedDate { get; set; }
-        public bool IsActive { get; set; }
-        public bool IsCodeExpired => DateTime.Now - CodeGeneratedDate > TimeSpan.FromHours(24);
-    }
-
-    public class StaffLoginDto
-    {
-        public string DailyCode { get; set; } = "";
-    }
-
-    public class StaffLoginResponseDto
-    {
-        public bool Success { get; set; }
-        public string Message { get; set; } = "";
-        public StaffDto? Staff { get; set; }
-    }
+    // NOTE: Staff DTOs are defined in StaffDTOs.cs to avoid duplication
 
     // Sync DTOs
     public class SyncInfoDto
@@ -105,7 +79,7 @@ namespace PottaAPI.Models
         public List<ProductVariationDto> ProductVariations { get; set; } = new();
         public List<CategoryDto> Categories { get; set; } = new();
         public List<TableDTO> Tables { get; set; } = new(); // Using TableDTO from TableDTOs.cs
-        public List<StaffDto> Staff { get; set; } = new();
+        public List<StaffDTO> Staff { get; set; } = new(); // Using StaffDTO from StaffDTOs.cs
         public List<CustomerDto> Customers { get; set; } = new();
         public SyncInfoDto SyncInfo { get; set; } = new();
     }

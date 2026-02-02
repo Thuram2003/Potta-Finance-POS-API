@@ -8,6 +8,7 @@ namespace PottaAPI.Models
 
     /// <summary>
     /// DTO for table information
+    /// Mobile use case: Display table details in floor plan
     /// </summary>
     public class TableDTO
     {
@@ -34,42 +35,9 @@ namespace PottaAPI.Models
     }
 
     /// <summary>
-    /// DTO for creating a new table
-    /// </summary>
-    public class CreateTableDTO
-    {
-        [Required]
-        public int TableNumber { get; set; }
-
-        public string? TableName { get; set; }
-
-        [Range(1, 100)]
-        public int Capacity { get; set; } = 4;
-
-        public string? Description { get; set; }
-        public string? Size { get; set; }
-        public string? Shape { get; set; }
-    }
-
-    /// <summary>
-    /// DTO for updating table information
-    /// </summary>
-    public class UpdateTableDTO
-    {
-        public string? TableName { get; set; }
-        public int? TableNumber { get; set; }
-
-        [Range(1, 100)]
-        public int? Capacity { get; set; }
-
-        public string? Description { get; set; }
-        public string? Size { get; set; }
-        public string? Shape { get; set; }
-        public bool? IsActive { get; set; }
-    }
-
-    /// <summary>
-    /// DTO for updating table status
+    /// DTO for updating table status (unified endpoint)
+    /// Mobile use case: Update table status to Available, Occupied, Reserved, etc.
+    /// Replaces: ClearTable, ReserveTable, SetNotAvailable, SetUnpaid
     /// </summary>
     public class UpdateTableStatusDTO
     {
@@ -80,21 +48,13 @@ namespace PottaAPI.Models
         public string? TransactionId { get; set; }
     }
 
-    /// <summary>
-    /// DTO for table reservation
-    /// </summary>
-    public class ReserveTableDTO
-    {
-        public string? CustomerId { get; set; }
-        public DateTime? ReservationDate { get; set; }
-    }
-
     #endregion
 
     #region Seat DTOs
 
     /// <summary>
     /// DTO for seat information
+    /// Mobile use case: Display seat layout and availability
     /// </summary>
     public class SeatDTO
     {
@@ -115,20 +75,9 @@ namespace PottaAPI.Models
     }
 
     /// <summary>
-    /// DTO for creating seats for a table
-    /// </summary>
-    public class CreateSeatsDTO
-    {
-        [Required]
-        public string TableId { get; set; }
-
-        [Required]
-        [Range(1, 20)]
-        public int NumberOfSeats { get; set; }
-    }
-
-    /// <summary>
-    /// DTO for updating seat status
+    /// DTO for updating seat status (unified endpoint)
+    /// Mobile use case: Mark seat as Occupied, Available, Reserved, etc.
+    /// Replaces: SelectSeats, ClearSeat, ClearAllSeats
     /// </summary>
     public class UpdateSeatStatusDTO
     {
@@ -136,67 +85,6 @@ namespace PottaAPI.Models
         public string Status { get; set; } // Available, Occupied, Reserved, Not Available
 
         public string? CustomerId { get; set; }
-    }
-
-    /// <summary>
-    /// DTO for selecting multiple seats
-    /// </summary>
-    public class SelectSeatsDTO
-    {
-        [Required]
-        public string TableId { get; set; }
-
-        [Required]
-        public List<int> SeatNumbers { get; set; }
-
-        public string? CustomerId { get; set; }
-    }
-
-    #endregion
-
-    #region Response DTOs
-
-    /// <summary>
-    /// Response DTO for table with seats
-    /// </summary>
-    public class TableWithSeatsDTO
-    {
-        public TableDTO Table { get; set; }
-        public List<SeatDTO> Seats { get; set; }
-        public int OccupiedSeatsCount { get; set; }
-        public int AvailableSeatsCount { get; set; }
-    }
-
-    /// <summary>
-    /// Response DTO for table availability
-    /// </summary>
-    public class TableAvailabilityDTO
-    {
-        public string TableId { get; set; }
-        public string DisplayName { get; set; }
-        public bool IsAvailable { get; set; }
-        public int TotalSeats { get; set; }
-        public int AvailableSeats { get; set; }
-        public int OccupiedSeats { get; set; }
-        public string Status { get; set; }
-        public bool HasPendingTransactions { get; set; }
-    }
-
-    /// <summary>
-    /// Response DTO for table summary statistics
-    /// </summary>
-    public class TableSummaryDTO
-    {
-        public int TotalTables { get; set; }
-        public int AvailableTables { get; set; }
-        public int OccupiedTables { get; set; }
-        public int ReservedTables { get; set; }
-        public int UnpaidTables { get; set; }
-        public int NotAvailableTables { get; set; }
-
-        // Computed properties
-        public double OccupancyRate => TotalTables > 0 ? (double)OccupiedTables / TotalTables * 100 : 0;
-        public int BusyTables => OccupiedTables + ReservedTables + UnpaidTables;
     }
 
     #endregion

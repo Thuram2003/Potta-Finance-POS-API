@@ -70,7 +70,14 @@ namespace PottaAPI.Services
         #region Product Variation Operations
 
         /// <summary>
-        /// Get variations for a product
+        /// Get variations for a product with full attribute and value data (for ComboBox UI)
+        /// </summary>
+        /// <param name="productId">Parent product ID</param>
+        /// <returns>Product variations with attributes and values</returns>
+        Task<ProductVariationsWithAttributesDto> GetProductVariationsWithAttributesAsync(string productId);
+
+        /// <summary>
+        /// Get variations for a product (simple list)
         /// </summary>
         /// <param name="productId">Parent product ID</param>
         /// <returns>List of product variations</returns>

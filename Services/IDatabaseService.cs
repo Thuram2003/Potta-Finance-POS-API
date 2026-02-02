@@ -6,10 +6,6 @@ namespace PottaAPI.Services
     {
         Task TestConnectionAsync();
 
-        // Staff & Authentication
-        Task<List<StaffDto>> GetActiveStaffAsync();
-        Task<StaffDto?> ValidateStaffCodeAsync(string dailyCode);
-
         // Sync & Statistics
         Task<SyncInfoDto> GetLastSyncInfoAsync();
         Task<DetailedSyncInfoDto> GetDetailedSyncInfoAsync();

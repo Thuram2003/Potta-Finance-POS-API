@@ -301,21 +301,32 @@ namespace PottaAPI.Controllers
         #region Product Variation Operations
 
         /// <summary>
-        /// Get variations for a product
+        /// Get variations for a product with full attribute and value data
+        /// 
+        /// Returns structured data for building ComboBox UI:
+        /// - List of attributes (e.g., Color, Size)
+        /// - List of values for each attribute (e.g., Red/Blue/Green for Color)
+        /// - List of variations with their attribute-value mappings
+        /// 
+        /// This allows the client to:
+        /// 1. Build ComboBoxes for each attribute
+        /// 2. Populate ComboBoxes with available values
+        /// 3. Match user selections to specific variations
         /// </summary>
         /// <param name="productId">Parent product ID</param>
-        /// <returns>List of product variations</returns>
+        /// <returns>Product variations with attributes and values</returns>
         [HttpGet("products/{productId}/variations")]
-        public async Task<ActionResult<ApiResponseDto<List<ProductVariationDto>>>> GetProductVariations(string productId)
+        public async Task<ActionResult<ApiResponseDto<ProductVariationsWithAttributesDto>>> GetProductVariations(string productId)
         {
             try
             {
-                var variations = await _itemService.GetProductVariationsAsync(productId);
-                return Ok(new ApiResponseDto<List<ProductVariationDto>>
+                var result = await _itemService.GetProductVariationsWithAttributesAsync(productId);
+                
+                return Ok(new ApiResponseDto<ProductVariationsWithAttributesDto>
                 {
                     Success = true,
-                    Message = $"Retrieved {variations.Count} variations for product",
-                    Data = variations
+                    Message = $"Retrieved {result.Variations.Count} variations with {result.Attributes.Count} attributes",
+                    Data = result
                 });
             }
             catch (Exception ex)

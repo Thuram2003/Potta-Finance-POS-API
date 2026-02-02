@@ -16,34 +16,8 @@ namespace PottaAPI.Controllers
         }
 
         /// <summary>
-        /// Get sync information (counts and timestamps)
-        /// </summary>
-        [HttpGet("info")]
-        public async Task<ActionResult<ApiResponseDto<SyncInfoDto>>> GetSyncInfo()
-        {
-            try
-            {
-                var syncInfo = await _databaseService.GetLastSyncInfoAsync();
-                return Ok(new ApiResponseDto<SyncInfoDto>
-                {
-                    Success = true,
-                    Message = "Sync information retrieved successfully",
-                    Data = syncInfo
-                });
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, new ErrorResponseDto
-                {
-                    Error = "Failed to retrieve sync information",
-                    Details = ex.Message
-                });
-            }
-        }
-
-        
-        /// <summary>
-        /// Health check endpoint for mobile apps
+        /// Health check endpoint for mobile apps and monitoring
+        /// Returns API status, database connectivity, and key statistics
         /// </summary>
         [HttpGet("health")]
         public async Task<ActionResult<ApiResponseDto<object>>> HealthCheck()

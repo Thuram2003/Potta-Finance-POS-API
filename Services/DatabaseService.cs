@@ -102,75 +102,8 @@ namespace PottaAPI.Services
             }
         }
 
-        public async Task<List<StaffDto>> GetActiveStaffAsync()
-        {
-            var staff = new List<StaffDto>();
-
-            using var connection = new SqliteConnection(_connectionString);
-            await connection.OpenAsync();
-
-            var command = connection.CreateCommand();
-            command.CommandText = @"
-                SELECT Id, FirstName, LastName, Email, Phone, DailyCode, 
-                       CodeGeneratedDate, CreatedDate, IsActive
-                FROM Staff 
-                WHERE IsActive = 1
-                ORDER BY FirstName, LastName";
-
-            using var reader = await command.ExecuteReaderAsync();
-            while (await reader.ReadAsync())
-            {
-                staff.Add(new StaffDto
-                {
-                    Id = Convert.ToInt32(reader["Id"] ?? 0),
-                    FirstName = reader["FirstName"]?.ToString() ?? "",
-                    LastName = reader["LastName"]?.ToString() ?? "",
-                    Email = reader["Email"]?.ToString() ?? "",
-                    Phone = reader["Phone"]?.ToString() ?? "",
-                    DailyCode = reader["DailyCode"]?.ToString() ?? "",
-                    CodeGeneratedDate = Convert.ToDateTime(reader["CodeGeneratedDate"]),
-                    CreatedDate = Convert.ToDateTime(reader["CreatedDate"]),
-                    IsActive = Convert.ToBoolean(reader["IsActive"] ?? true)
-                });
-            }
-
-            return staff;
-        }
-
-        public async Task<StaffDto?> ValidateStaffCodeAsync(string dailyCode)
-        {
-            using var connection = new SqliteConnection(_connectionString);
-            await connection.OpenAsync();
-
-            var command = connection.CreateCommand();
-            command.CommandText = @"
-                SELECT Id, FirstName, LastName, Email, Phone, DailyCode, 
-                       CodeGeneratedDate, CreatedDate, IsActive
-                FROM Staff 
-                WHERE DailyCode = @code AND IsActive = 1";
-            command.Parameters.AddWithValue("@code", dailyCode);
-
-            using var reader = await command.ExecuteReaderAsync();
-            if (await reader.ReadAsync())
-            {
-                return new StaffDto
-                {
-                    Id = Convert.ToInt32(reader["Id"] ?? 0),
-                    FirstName = reader["FirstName"]?.ToString() ?? "",
-                    LastName = reader["LastName"]?.ToString() ?? "",
-                    Email = reader["Email"]?.ToString() ?? "",
-                    Phone = reader["Phone"]?.ToString() ?? "",
-                    DailyCode = reader["DailyCode"]?.ToString() ?? "",
-                    CodeGeneratedDate = Convert.ToDateTime(reader["CodeGeneratedDate"]),
-                    CreatedDate = Convert.ToDateTime(reader["CreatedDate"]),
-                    IsActive = Convert.ToBoolean(reader["IsActive"] ?? true)
-                };
-            }
-
-            return null;
-        }
-
-        // Table operations moved to TableService.cs
+        // NOTE: Staff operations moved to StaffService.cs
+        // NOTE: Table operations moved to TableService.cs
 
         public async Task<SyncInfoDto> GetLastSyncInfoAsync()
         {
