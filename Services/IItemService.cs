@@ -131,5 +131,40 @@ namespace PottaAPI.Services
         Task<CategoryDto?> GetCategoryByIdAsync(string categoryId);
 
         #endregion
+
+        #region Modifier Operations
+
+        /// <summary>
+        /// Get all active modifiers
+        /// </summary>
+        /// <returns>List of active modifiers</returns>
+        Task<List<ModifierDto>> GetAllModifiersAsync();
+
+        /// <summary>
+        /// Get modifier by ID
+        /// </summary>
+        /// <param name="modifierId">Modifier ID</param>
+        /// <returns>Modifier if found, null otherwise</returns>
+        Task<ModifierDto?> GetModifierByIdAsync(string modifierId);
+
+        #endregion
+
+        #region Multi-Unit Pricing Operations
+
+        /// <summary>
+        /// Get unit pricing options for a product
+        /// </summary>
+        /// <param name="productId">Product ID</param>
+        /// <returns>List of unit pricing options</returns>
+        Task<List<ProductUnitPricingDto>> GetProductUnitPricingAsync(string productId);
+
+        /// <summary>
+        /// Get unit pricing options for a variation
+        /// </summary>
+        /// <param name="variationId">Variation ID</param>
+        /// <returns>List of unit pricing options</returns>
+        Task<List<ProductUnitPricingDto>> GetVariationUnitPricingAsync(string variationId);
+
+        #endregion
     }
 }

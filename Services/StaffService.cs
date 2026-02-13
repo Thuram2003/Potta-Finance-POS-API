@@ -7,10 +7,7 @@ using PottaAPI.Models;
 
 namespace PottaAPI.Services
 {
-    /// <summary>
-    /// Service for staff authentication and validation
-    /// READ-ONLY: No CRUD operations (staff management is desktop-only)
-    /// </summary>
+    // Staff authentication service (read-only, no CRUD)
     public class StaffService : IStaffService
     {
         private readonly string _connectionString;
@@ -21,9 +18,7 @@ namespace PottaAPI.Services
             _connectionString = connectionString;
         }
 
-        /// <summary>
-        /// Authenticate staff member using daily code
-        /// </summary>
+        // Authenticate staff with daily code
         public async Task<StaffLoginResponse> LoginWithDailyCodeAsync(string dailyCode)
         {
             try
@@ -87,9 +82,7 @@ namespace PottaAPI.Services
             }
         }
 
-        /// <summary>
-        /// Validate if a daily code is valid and not expired
-        /// </summary>
+        // Validate daily code
         public async Task<CodeValidationResponse> ValidateCodeAsync(string dailyCode)
         {
             try
@@ -152,9 +145,7 @@ namespace PottaAPI.Services
             }
         }
 
-        /// <summary>
-        /// Get staff information by daily code
-        /// </summary>
+        // Get staff info by daily code
         public async Task<StaffDTO?> GetStaffByCodeAsync(string dailyCode)
         {
             try
@@ -202,9 +193,7 @@ namespace PottaAPI.Services
             }
         }
 
-        /// <summary>
-        /// Get QR code data for a specific staff member
-        /// </summary>
+        // Get QR code data for staff member
         public async Task<StaffQRCodeResponse> GetStaffQRCodeDataAsync(int staffId, string apiUrl)
         {
             try
@@ -270,9 +259,7 @@ namespace PottaAPI.Services
             }
         }
 
-        /// <summary>
-        /// Generate a simple session token (enhance for production)
-        /// </summary>
+        // Generate session token
         private string GenerateSessionToken(int staffId, string dailyCode)
         {
             var timestamp = DateTime.Now.Ticks;

@@ -5,9 +5,7 @@ using Newtonsoft.Json;
 
 namespace PottaAPI.Services
 {
-    /// <summary>
-    /// Service for item-related database operations (products, bundles, recipes, variations)
-    /// </summary>
+    // Item service for products, bundles, recipes, variations
     public class ItemService : IItemService
     {
         private readonly string _connectionString;
@@ -30,6 +28,9 @@ namespace PottaAPI.Services
             // Get bundles
             var bundles = await GetAllBundlesAsync();
             items.AddRange(bundles.Cast<ItemDto>());
+
+            // Note: Assembly components are already filtered in GetAllProductsAsync()
+            // No need to filter again here
 
             return items.OrderBy(i => i.Name).ToList();
         }
@@ -118,6 +119,29 @@ namespace PottaAPI.Services
 
             await ExecuteSearchQuery(connection, bundleQuery, parameters, items, "Bundle");
 
+            // OPTIMIZED: Filter out assembly components using LEFT JOIN instead of N+1 query
+            // This prevents the separate GetProductsUsedInAssemblyBundlesAsync() call
+            var assemblyComponentIds = new HashSet<string>();
+            var assemblyCommand = connection.CreateCommand();
+            assemblyCommand.CommandText = @"
+                SELECT DISTINCT bc.productId
+                FROM BundleComponents bc
+                INNER JOIN BundleItems b ON bc.bundleId = b.bundleId
+                WHERE (b.structure = 'Assembly' OR b.isRecipe = 1) AND b.status = 1";
+            assemblyCommand.CommandTimeout = 30;
+            
+            using (var assemblyReader = await assemblyCommand.ExecuteReaderAsync())
+            {
+                while (await assemblyReader.ReadAsync())
+                {
+                    assemblyComponentIds.Add(assemblyReader.GetString(0));
+                }
+            }
+            
+            items = items.Where(i => 
+                i.Type != "Product" || !assemblyComponentIds.Contains(i.Id)
+            ).ToList();
+
             totalCount = items.Count;
 
             // Apply pagination
@@ -139,6 +163,7 @@ namespace PottaAPI.Services
         {
             var command = connection.CreateCommand();
             command.CommandText = query;
+            command.CommandTimeout = 30;
             
             foreach (var param in parameters)
             {
@@ -281,6 +306,10 @@ namespace PottaAPI.Services
                     products.Add(product);
                 }
             }
+
+            // ALWAYS filter out assembly components for POS/waiters
+            var assemblyComponentIds = await GetProductsUsedInAssemblyBundlesAsync();
+            products = products.Where(p => !assemblyComponentIds.Contains(p.Id)).ToList();
 
             return products;
         }
@@ -518,7 +547,7 @@ namespace PottaAPI.Services
                        inventoryOnHand, reorderPoint, status, taxable, taxId, createdDate, modifiedDate,
                        isRecipe, servingSize, preparationTime, cookingInstructions
                 FROM BundleItems 
-                WHERE status = 1
+                WHERE status = 1 AND isRecipe = 0
                 ORDER BY name";
 
             using var reader = await command.ExecuteReaderAsync();
@@ -693,6 +722,30 @@ namespace PottaAPI.Services
 
         #region Helper Methods
 
+        // Helper method to get products used in assembly bundles and recipes
+        private async Task<HashSet<string>> GetProductsUsedInAssemblyBundlesAsync()
+        {
+            var assemblyComponentIds = new HashSet<string>();
+            
+            using var connection = new SqliteConnection(_connectionString);
+            await connection.OpenAsync();
+            
+            var command = connection.CreateCommand();
+            command.CommandText = @"
+                SELECT DISTINCT bc.productId
+                FROM BundleComponents bc
+                INNER JOIN BundleItems b ON bc.bundleId = b.bundleId
+                WHERE (b.structure = 'Assembly' OR b.isRecipe = 1) AND b.status = 1";
+            
+            using var reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                assemblyComponentIds.Add(reader.GetString(0));
+            }
+            
+            return assemblyComponentIds;
+        }
+
         // Safe data reader helper methods
         private bool SafeGetBoolean(SqliteDataReader reader, string columnName, bool defaultValue = false)
         {
@@ -744,6 +797,20 @@ namespace PottaAPI.Services
             {
                 return defaultValue;
             }
+        }
+
+        /// <summary>
+        /// Converts Windows file paths to URL-friendly paths by replacing backslashes with forward slashes
+        /// </summary>
+        /// <param name="path">The file path from the database (e.g., "Images\\Products\\image.png")</param>
+        /// <returns>URL-friendly path (e.g., "Images/Products/image.png")</returns>
+        private string ConvertPathToUrl(string path)
+        {
+            if (string.IsNullOrEmpty(path))
+                return string.Empty;
+            
+            // Replace Windows backslashes with forward slashes for URLs
+            return path.Replace("\\", "/");
         }
 
         private ItemDto? CreateItemFromDataReader(SqliteDataReader reader, string itemType)
@@ -812,7 +879,7 @@ namespace PottaAPI.Services
                     Description = reader["description"]?.ToString() ?? "",
                     Cost = reader.IsDBNull("cost") ? 0 : reader.GetDecimal("cost"),
                     SalesPrice = reader.IsDBNull("salesPrice") ? 0 : reader.GetDecimal("salesPrice"),
-                    ImagePath = reader["imagePath"]?.ToString() ?? "",
+                    ImagePath = ConvertPathToUrl(reader["imagePath"]?.ToString() ?? ""),
                     Status = reader.GetBoolean("status"),
                     Taxable = reader.GetBoolean("taxable"),
                     TaxId = reader["taxId"]?.ToString() ?? "",
@@ -864,7 +931,7 @@ namespace PottaAPI.Services
                     Description = SafeGetString(reader, "description"),
                     Cost = SafeGetDecimal(reader, "cost"),
                     SalesPrice = SafeGetDecimal(reader, "salesPrice"),
-                    ImagePath = SafeGetString(reader, "imagePath"),
+                    ImagePath = ConvertPathToUrl(SafeGetString(reader, "imagePath")),
                     Status = SafeGetBoolean(reader, "status", true),
                     Taxable = SafeGetBoolean(reader, "taxable"),
                     TaxId = SafeGetString(reader, "taxId"),
@@ -902,7 +969,7 @@ namespace PottaAPI.Services
                     SalesPrice = SafeGetDecimal(reader, "salesPrice"),
                     InventoryOnHand = SafeGetDecimal(reader, "inventoryOnHand"),
                     ReorderPoint = SafeGetDecimal(reader, "reorderPoint"),
-                    ImagePath = SafeGetString(reader, "imagePath"),
+                    ImagePath = ConvertPathToUrl(SafeGetString(reader, "imagePath")),
                     Status = SafeGetBoolean(reader, "status", true),
                     AttributeValuesDisplay = "", // Would need additional query to get attribute values
                     FullDisplayName = $"{SafeGetString(reader, "parentProductName")} - {SafeGetString(reader, "name")}"
@@ -942,7 +1009,7 @@ namespace PottaAPI.Services
                     Description = SafeGetString(reader, "description"),
                     Cost = SafeGetDecimal(reader, "cost"),
                     SalesPrice = SafeGetDecimal(reader, "salesPrice"),
-                    ImagePath = SafeGetString(reader, "imagePath"),
+                    ImagePath = ConvertPathToUrl(SafeGetString(reader, "imagePath")),
                     Status = SafeGetBoolean(reader, "status", true),
                     Taxable = SafeGetBoolean(reader, "taxable"),
                     TaxId = SafeGetString(reader, "taxId"),
@@ -955,6 +1022,188 @@ namespace PottaAPI.Services
             {
                 return null;
             }
+        }
+
+        #endregion
+
+        #region Modifier Operations
+
+        public async Task<List<ModifierDto>> GetAllModifiersAsync()
+        {
+            var modifiers = new List<ModifierDto>();
+
+            using var connection = new SqliteConnection(_connectionString);
+            await connection.OpenAsync();
+
+            var command = connection.CreateCommand();
+            command.CommandText = @"
+                SELECT m.modifierId, m.modifierName, m.priceChange, m.sortOrder, m.status, 
+                       m.createdDate, m.modifiedDate, m.recipeId, m.useRecipePrice,
+                       b.name as recipeName, b.cost as recipeCost
+                FROM Modifiers m
+                LEFT JOIN BundleItems b ON m.recipeId = b.bundleId
+                WHERE m.status = 1
+                ORDER BY m.sortOrder, m.modifierName";
+
+            using var reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                modifiers.Add(new ModifierDto
+                {
+                    ModifierId = SafeGetString(reader, "modifierId"),
+                    ModifierName = SafeGetString(reader, "modifierName"),
+                    PriceChange = SafeGetDecimal(reader, "priceChange"),
+                    SortOrder = SafeGetInt32(reader, "sortOrder"),
+                    Status = SafeGetBoolean(reader, "status", true),
+                    CreatedDate = reader.GetDateTime("createdDate"),
+                    ModifiedDate = reader.GetDateTime("modifiedDate"),
+                    RecipeId = SafeGetString(reader, "recipeId"),
+                    UseRecipePrice = SafeGetBoolean(reader, "useRecipePrice"),
+                    RecipeName = SafeGetString(reader, "recipeName"),
+                    RecipeCost = SafeGetDecimal(reader, "recipeCost")
+                });
+            }
+
+            return modifiers;
+        }
+
+        public async Task<ModifierDto?> GetModifierByIdAsync(string modifierId)
+        {
+            using var connection = new SqliteConnection(_connectionString);
+            await connection.OpenAsync();
+
+            var command = connection.CreateCommand();
+            command.CommandText = @"
+                SELECT m.modifierId, m.modifierName, m.priceChange, m.sortOrder, m.status, 
+                       m.createdDate, m.modifiedDate, m.recipeId, m.useRecipePrice,
+                       b.name as recipeName, b.cost as recipeCost
+                FROM Modifiers m
+                LEFT JOIN BundleItems b ON m.recipeId = b.bundleId
+                WHERE m.modifierId = @modifierId AND m.status = 1";
+            command.Parameters.AddWithValue("@modifierId", modifierId);
+
+            using var reader = await command.ExecuteReaderAsync();
+            if (await reader.ReadAsync())
+            {
+                return new ModifierDto
+                {
+                    ModifierId = SafeGetString(reader, "modifierId"),
+                    ModifierName = SafeGetString(reader, "modifierName"),
+                    PriceChange = SafeGetDecimal(reader, "priceChange"),
+                    SortOrder = SafeGetInt32(reader, "sortOrder"),
+                    Status = SafeGetBoolean(reader, "status", true),
+                    CreatedDate = reader.GetDateTime("createdDate"),
+                    ModifiedDate = reader.GetDateTime("modifiedDate"),
+                    RecipeId = SafeGetString(reader, "recipeId"),
+                    UseRecipePrice = SafeGetBoolean(reader, "useRecipePrice"),
+                    RecipeName = SafeGetString(reader, "recipeName"),
+                    RecipeCost = SafeGetDecimal(reader, "recipeCost")
+                };
+            }
+
+            return null;
+        }
+
+        #endregion
+
+        #region Multi-Unit Pricing Operations
+
+        public async Task<List<ProductUnitPricingDto>> GetProductUnitPricingAsync(string productId)
+        {
+            var unitPricing = new List<ProductUnitPricingDto>();
+
+            using var connection = new SqliteConnection(_connectionString);
+            await connection.OpenAsync();
+
+            // First get the base product price
+            var productCommand = connection.CreateCommand();
+            productCommand.CommandText = "SELECT salesPrice FROM Products WHERE productId = @productId";
+            productCommand.Parameters.AddWithValue("@productId", productId);
+            var basePrice = Convert.ToDecimal(await productCommand.ExecuteScalarAsync() ?? 0);
+
+            // Get unit pricing options
+            var command = connection.CreateCommand();
+            command.CommandText = @"
+                SELECT unitPricingId, productId, variationId, packageName, baseUnit, 
+                       unitsPerPackage, packagePrice, sku, isActive, 
+                       createdDate, modifiedDate
+                FROM ProductUnitPricing
+                WHERE productId = @productId AND isActive = 1
+                ORDER BY unitsPerPackage ASC";
+            command.Parameters.AddWithValue("@productId", productId);
+
+            using var reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                var pricing = new ProductUnitPricingDto
+                {
+                    UnitPricingId = SafeGetString(reader, "unitPricingId"),
+                    ProductId = SafeGetString(reader, "productId"),
+                    VariationId = SafeGetString(reader, "variationId"),
+                    PackageName = SafeGetString(reader, "packageName"),
+                    BaseUnit = SafeGetString(reader, "baseUnit"),
+                    UnitsPerPackage = SafeGetDecimal(reader, "unitsPerPackage"),
+                    PackagePrice = SafeGetDecimal(reader, "packagePrice"),
+                    SKU = SafeGetString(reader, "sku"),
+                    IsActive = SafeGetBoolean(reader, "isActive", true),
+                    CreatedDate = reader.GetDateTime("createdDate"),
+                    ModifiedDate = reader.GetDateTime("modifiedDate"),
+                    BaseUnitPrice = basePrice
+                };
+
+                unitPricing.Add(pricing);
+            }
+
+            return unitPricing;
+        }
+
+        public async Task<List<ProductUnitPricingDto>> GetVariationUnitPricingAsync(string variationId)
+        {
+            var unitPricing = new List<ProductUnitPricingDto>();
+
+            using var connection = new SqliteConnection(_connectionString);
+            await connection.OpenAsync();
+
+            // First get the base variation price
+            var variationCommand = connection.CreateCommand();
+            variationCommand.CommandText = "SELECT salesPrice FROM ProductVariations WHERE variationId = @variationId";
+            variationCommand.Parameters.AddWithValue("@variationId", variationId);
+            var basePrice = Convert.ToDecimal(await variationCommand.ExecuteScalarAsync() ?? 0);
+
+            // Get unit pricing options
+            var command = connection.CreateCommand();
+            command.CommandText = @"
+                SELECT unitPricingId, productId, variationId, packageName, baseUnit, 
+                       unitsPerPackage, packagePrice, sku, isActive, 
+                       createdDate, modifiedDate
+                FROM ProductUnitPricing
+                WHERE variationId = @variationId AND isActive = 1
+                ORDER BY unitsPerPackage ASC";
+            command.Parameters.AddWithValue("@variationId", variationId);
+
+            using var reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                var pricing = new ProductUnitPricingDto
+                {
+                    UnitPricingId = SafeGetString(reader, "unitPricingId"),
+                    ProductId = SafeGetString(reader, "productId"),
+                    VariationId = SafeGetString(reader, "variationId"),
+                    PackageName = SafeGetString(reader, "packageName"),
+                    BaseUnit = SafeGetString(reader, "baseUnit"),
+                    UnitsPerPackage = SafeGetDecimal(reader, "unitsPerPackage"),
+                    PackagePrice = SafeGetDecimal(reader, "packagePrice"),
+                    SKU = SafeGetString(reader, "sku"),
+                    IsActive = SafeGetBoolean(reader, "isActive", true),
+                    CreatedDate = reader.GetDateTime("createdDate"),
+                    ModifiedDate = reader.GetDateTime("modifiedDate"),
+                    BaseUnitPrice = basePrice
+                };
+
+                unitPricing.Add(pricing);
+            }
+
+            return unitPricing;
         }
 
         #endregion

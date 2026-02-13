@@ -19,7 +19,17 @@ namespace PottaAPI.Services
             }
 
             Console.WriteLine($"Database found at: {dbPath}");
-            _connectionString = $"Data Source={dbPath};Foreign Keys=True;Mode=ReadWrite";
+            
+            var builder = new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder
+            {
+                DataSource = dbPath,
+                Mode = Microsoft.Data.Sqlite.SqliteOpenMode.ReadWrite,
+                Cache = Microsoft.Data.Sqlite.SqliteCacheMode.Shared,
+                Pooling = true,
+                ForeignKeys = true
+            };
+            
+            _connectionString = builder.ToString();
         }
 
         public string GetConnectionString()

@@ -198,4 +198,67 @@ namespace PottaAPI.Models
         public bool IsActive { get; set; }
         public DateTime CreatedDate { get; set; }
     }
+
+    /// <summary>
+    /// Modifier DTO for product customizations
+    /// </summary>
+    public class ModifierDto
+    {
+        public string ModifierId { get; set; } = "";
+        public string ModifierName { get; set; } = "";
+        public decimal PriceChange { get; set; }
+        public int SortOrder { get; set; }
+        public bool Status { get; set; }
+        public DateTime CreatedDate { get; set; }
+        public DateTime ModifiedDate { get; set; }
+        
+        // Recipe linking
+        public string? RecipeId { get; set; }
+        public bool UseRecipePrice { get; set; }
+        public string? RecipeName { get; set; }
+        public decimal RecipeCost { get; set; }
+        
+        // Computed properties
+        public bool HasRecipe => !string.IsNullOrEmpty(RecipeId);
+        public string ModifierTypeDisplay => HasRecipe ? "Recipe-based" : "Price Only";
+        public decimal EffectivePrice => (HasRecipe && UseRecipePrice) ? RecipeCost : PriceChange;
+        public string PriceChangeDisplay => 
+            EffectivePrice >= 0 ? $"+XAF {EffectivePrice:N0}" : $"-XAF {Math.Abs(EffectivePrice):N0}";
+        public string StatusDisplay => Status ? "Active" : "Inactive";
+    }
+
+    /// <summary>
+    /// Multi-unit pricing DTO for package options
+    /// </summary>
+    public class ProductUnitPricingDto
+    {
+        public string UnitPricingId { get; set; } = "";
+        public string ProductId { get; set; } = "";
+        public string? VariationId { get; set; }
+        public string PackageName { get; set; } = "";
+        public string BaseUnit { get; set; } = "";
+        public decimal UnitsPerPackage { get; set; }
+        public decimal PackagePrice { get; set; }
+        public string FormattedPackagePrice => $"XAF {PackagePrice:N0}";
+        public string PackageImagePath { get; set; } = "";
+        public bool IsActive { get; set; }
+        public string SKU { get; set; } = "";
+        public DateTime CreatedDate { get; set; }
+        public DateTime ModifiedDate { get; set; }
+        
+        // Computed properties
+        public decimal PricePerUnitInPackage => UnitsPerPackage > 0 ? PackagePrice / UnitsPerPackage : 0;
+        public string FormattedPricePerUnit => $"XAF {PricePerUnitInPackage:N0}";
+        public decimal BaseUnitPrice { get; set; } // Set externally for comparison
+        public decimal DiscountPercentage => 
+            BaseUnitPrice > 0 && UnitsPerPackage > 0 
+                ? ((BaseUnitPrice - PricePerUnitInPackage) / BaseUnitPrice) * 100 
+                : 0;
+        public bool IsDiscounted => DiscountPercentage > 0;
+        public bool IsPremium => DiscountPercentage < 0;
+        public string DiscountDisplay => 
+            IsDiscounted ? $"Save {DiscountPercentage:F1}%" : 
+            IsPremium ? $"+{Math.Abs(DiscountPercentage):F1}%" : "";
+        public string PackageInfo => $"{UnitsPerPackage} {BaseUnit}s per {PackageName}";
+    }
 }

@@ -12,12 +12,9 @@ namespace PottaAPI.Controllers
     [Route("api/[controller]")]
     public class NetworkController : ControllerBase
     {
-        /// <summary>
-        /// Get QR code data as JSON string (for QR code generation)
-        /// Used by desktop app to generate QR codes for mobile app connection
-        /// Returns clean JSON structure for easy mobile app parsing
-        /// </summary>
+        /// <summary>Get QR code for mobile app connection</summary>
         [HttpGet("qr-string")]
+        [ResponseCache(Duration = 10)]
         public IActionResult GetQRCodeString()
         {
             var primaryIp = GetPrimaryLocalIPAddress();

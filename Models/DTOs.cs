@@ -1,8 +1,5 @@
 namespace PottaAPI.Models
 {
-    // NOTE: Staff DTOs are defined in StaffDTOs.cs to avoid duplication
-
-    // Sync DTOs
     public class SyncInfoDto
     {
         public int ProductCount { get; set; }
@@ -78,8 +75,8 @@ namespace PottaAPI.Models
         public List<BundleDto> BundleItems { get; set; } = new();
         public List<ProductVariationDto> ProductVariations { get; set; } = new();
         public List<CategoryDto> Categories { get; set; } = new();
-        public List<TableDTO> Tables { get; set; } = new(); // Using TableDTO from TableDTOs.cs
-        public List<StaffDTO> Staff { get; set; } = new(); // Using StaffDTO from StaffDTOs.cs
+        public List<TableDTO> Tables { get; set; } = new(); 
+        public List<StaffDTO> Staff { get; set; } = new(); 
         public List<CustomerDto> Customers { get; set; } = new();
         public SyncInfoDto SyncInfo { get; set; } = new();
     }
@@ -110,58 +107,4 @@ namespace PottaAPI.Models
         public int TotalItems { get; set; }
     }
 
-    // Network Discovery DTOs
-    public class NetworkInfoDto
-    {
-        public List<string> LocalIpAddresses { get; set; } = new();
-        public string HostName { get; set; } = "";
-        public int Port { get; set; }
-        public List<string> ApiBaseUrls { get; set; } = new();
-        public string MachineName { get; set; } = "";
-        public DateTime Timestamp { get; set; }
-    }
-
-    public class QRCodeDataDto
-    {
-        public string ApiUrl { get; set; } = "";
-        public string HostName { get; set; } = "";
-        public string MachineName { get; set; } = "";
-        public int Port { get; set; }
-        public string Version { get; set; } = "";
-        public DateTime Timestamp { get; set; }
-    }
-
-    public class NetworkInterfaceDto
-    {
-        public string Name { get; set; } = "";
-        public string Description { get; set; } = "";
-        public string Type { get; set; } = "";
-        public string Status { get; set; } = "";
-        public long Speed { get; set; }
-        public string MacAddress { get; set; } = "";
-        public List<string> IpAddresses { get; set; } = new();
-    }
-
-    public class TestConnectionDto
-    {
-        public string DeviceName { get; set; } = "";
-        public string DeviceType { get; set; } = "";
-        public string AppVersion { get; set; } = "";
-    }
-
-    // API Response DTOs
-    public class ApiResponseDto<T>
-    {
-        public bool Success { get; set; }
-        public string Message { get; set; } = "";
-        public T? Data { get; set; }
-        public DateTime Timestamp { get; set; } = DateTime.Now;
-    }
-
-    public class ErrorResponseDto
-    {
-        public string Error { get; set; } = "";
-        public string Details { get; set; } = "";
-        public DateTime Timestamp { get; set; } = DateTime.Now;
-    }
 }

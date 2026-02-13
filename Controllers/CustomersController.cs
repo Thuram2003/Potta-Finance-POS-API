@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using PottaAPI.Models;
+using PottaAPI.Models.Common;
 using PottaAPI.Services;
 
 namespace PottaAPI.Controllers
@@ -23,6 +24,7 @@ namespace PottaAPI.Controllers
         /// </summary>
         /// <returns>List of active customers</returns>
         [HttpGet]
+        [ResponseCache(Duration = 30, Location = ResponseCacheLocation.Any, VaryByQueryKeys = new string[] { })]
         public async Task<ActionResult<ApiResponseDto<List<CustomerDto>>>> GetAllCustomers()
         {
             try
@@ -51,6 +53,7 @@ namespace PottaAPI.Controllers
         /// <param name="id">Customer ID</param>
         /// <returns>Customer details if found</returns>
         [HttpGet("{id}")]
+        [ResponseCache(Duration = 30, Location = ResponseCacheLocation.Any, VaryByQueryKeys = new string[] { "id" })]
         public async Task<ActionResult<ApiResponseDto<CustomerDto>>> GetCustomerById(string id)
         {
             try

@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using PottaAPI.Models;
+using PottaAPI.Models.Common;
 using PottaAPI.Services;
 
 namespace PottaAPI.Controllers
@@ -25,6 +26,7 @@ namespace PottaAPI.Controllers
         /// </summary>
         /// <returns>List of active items</returns>
         [HttpGet]
+        [ResponseCache(Duration = 60, Location = ResponseCacheLocation.Any, VaryByQueryKeys = new string[] { })]
         public async Task<ActionResult<ApiResponseDto<List<ItemDto>>>> GetAllItems()
         {
             try
@@ -53,6 +55,7 @@ namespace PottaAPI.Controllers
         /// <param name="id">Item ID</param>
         /// <returns>Item details if found</returns>
         [HttpGet("{id}")]
+        [ResponseCache(Duration = 60, Location = ResponseCacheLocation.Any, VaryByQueryKeys = new string[] { "id" })]
         public async Task<ActionResult<ApiResponseDto<ItemDto>>> GetItemById(string id)
         {
             try
@@ -537,6 +540,148 @@ namespace PottaAPI.Controllers
                 return StatusCode(500, new ErrorResponseDto
                 {
                     Error = "Failed to retrieve category",
+                    Details = ex.Message
+                });
+            }
+        }
+
+        #endregion
+
+        #region Modifier Operations
+
+        /// <summary>
+        /// Get all active modifiers
+        /// </summary>
+        /// <returns>List of active modifiers</returns>
+        [HttpGet("modifiers")]
+        public async Task<ActionResult<ApiResponseDto<List<ModifierDto>>>> GetAllModifiers()
+        {
+            try
+            {
+                var modifiers = await _itemService.GetAllModifiersAsync();
+                return Ok(new ApiResponseDto<List<ModifierDto>>
+                {
+                    Success = true,
+                    Message = $"Retrieved {modifiers.Count} modifiers",
+                    Data = modifiers
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new ErrorResponseDto
+                {
+                    Error = "Failed to retrieve modifiers",
+                    Details = ex.Message
+                });
+            }
+        }
+
+        /// <summary>
+        /// Get modifier by ID
+        /// </summary>
+        /// <param name="id">Modifier ID</param>
+        /// <returns>Modifier details if found</returns>
+        [HttpGet("modifiers/{id}")]
+        public async Task<ActionResult<ApiResponseDto<ModifierDto>>> GetModifierById(string id)
+        {
+            try
+            {
+                var modifier = await _itemService.GetModifierByIdAsync(id);
+                
+                if (modifier == null)
+                {
+                    return NotFound(new ErrorResponseDto
+                    {
+                        Error = "Modifier not found",
+                        Details = $"No modifier found with ID: {id}"
+                    });
+                }
+
+                return Ok(new ApiResponseDto<ModifierDto>
+                {
+                    Success = true,
+                    Message = "Modifier retrieved successfully",
+                    Data = modifier
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new ErrorResponseDto
+                {
+                    Error = "Failed to retrieve modifier",
+                    Details = ex.Message
+                });
+            }
+        }
+
+        #endregion
+
+        #region Multi-Unit Pricing Operations
+
+        /// <summary>
+        /// Get unit pricing options for a product
+        /// 
+        /// Returns different package sizes/units for selling the same product.
+        /// Example: Sell Coca-Cola by bottle (330ml) or by crate (24 bottles)
+        /// 
+        /// Each option includes:
+        /// - Package name (e.g., "Bottle", "Crate")
+        /// - Units per package (e.g., 1 bottle, 24 bottles)
+        /// - Package price
+        /// - Price per unit in package (calculated)
+        /// - Discount percentage compared to base unit price
+        /// </summary>
+        /// <param name="productId">Product ID</param>
+        /// <returns>List of unit pricing options</returns>
+        [HttpGet("products/{productId}/unit-pricing")]
+        public async Task<ActionResult<ApiResponseDto<List<ProductUnitPricingDto>>>> GetProductUnitPricing(string productId)
+        {
+            try
+            {
+                var unitPricing = await _itemService.GetProductUnitPricingAsync(productId);
+                return Ok(new ApiResponseDto<List<ProductUnitPricingDto>>
+                {
+                    Success = true,
+                    Message = $"Retrieved {unitPricing.Count} unit pricing options",
+                    Data = unitPricing
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new ErrorResponseDto
+                {
+                    Error = "Failed to retrieve unit pricing",
+                    Details = ex.Message
+                });
+            }
+        }
+
+        /// <summary>
+        /// Get unit pricing options for a product variation
+        /// 
+        /// Same as product unit pricing but for specific variations.
+        /// Example: Coca-Cola (Regular) might have different pricing than Coca-Cola (Diet)
+        /// </summary>
+        /// <param name="variationId">Variation ID</param>
+        /// <returns>List of unit pricing options</returns>
+        [HttpGet("variations/{variationId}/unit-pricing")]
+        public async Task<ActionResult<ApiResponseDto<List<ProductUnitPricingDto>>>> GetVariationUnitPricing(string variationId)
+        {
+            try
+            {
+                var unitPricing = await _itemService.GetVariationUnitPricingAsync(variationId);
+                return Ok(new ApiResponseDto<List<ProductUnitPricingDto>>
+                {
+                    Success = true,
+                    Message = $"Retrieved {unitPricing.Count} unit pricing options",
+                    Data = unitPricing
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new ErrorResponseDto
+                {
+                    Error = "Failed to retrieve unit pricing",
                     Details = ex.Message
                 });
             }

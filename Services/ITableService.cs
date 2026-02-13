@@ -4,10 +4,7 @@ using PottaAPI.Models;
 
 namespace PottaAPI.Services
 {
-    /// <summary>
-    /// Simplified table service interface for mobile device operations.
-    /// Table creation/editing/deletion is handled by desktop UI only.
-    /// </summary>
+    // Table service interface for mobile operations
     public interface ITableService
     {
         // Core table operations (6 essential methods for mobile)

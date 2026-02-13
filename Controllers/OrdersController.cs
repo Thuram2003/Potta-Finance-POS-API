@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using PottaAPI.Models;
+using PottaAPI.Models.Common;
 using PottaAPI.Services;
 
 namespace PottaAPI.Controllers
@@ -20,8 +21,50 @@ namespace PottaAPI.Controllers
 
         /// <summary>
         /// Create a new waiting transaction (mobile order)
+        /// POST /api/orders
         /// </summary>
+        /// <param name="order">Order creation request with staff ID and items</param>
+        /// <returns>Transaction ID of created order</returns>
+        /// <remarks>
+        /// Sample request:
+        /// 
+        ///     POST /api/orders
+        ///     {
+        ///       "staffId": 1,
+        ///       "customerId": "CUST001",
+        ///       "tableId": "TBL001",
+        ///       "tableNumber": 5,
+        ///       "tableName": "Table 5",
+        ///       "items": [
+        ///         {
+        ///           "productId": "PROD001",
+        ///           "name": "Burger",
+        ///           "quantity": 2,
+        ///           "price": 5000,
+        ///           "discount": 0,
+        ///           "taxId": "TAX001",
+        ///           "taxable": true,
+        ///           "unitType": "Base",
+        ///           "unitsPerPackage": 1,
+        ///           "appliedModifiers": [
+        ///             {
+        ///               "modifierId": "MOD001",
+        ///               "modifierName": "Extra Cheese",
+        ///               "priceChange": 500
+        ///             }
+        ///           ]
+        ///         }
+        ///       ]
+        ///     }
+        /// 
+        /// </remarks>
+        /// <response code="200">Order created successfully</response>
+        /// <response code="400">Invalid request data</response>
+        /// <response code="500">Server error</response>
         [HttpPost]
+        [ProducesResponseType(typeof(ApiResponseDto<string>), 200)]
+        [ProducesResponseType(typeof(ErrorResponseDto), 400)]
+        [ProducesResponseType(typeof(ErrorResponseDto), 500)]
         public async Task<ActionResult<ApiResponseDto<string>>> CreateOrder([FromBody] CreateWaitingTransactionDto order)
         {
             try

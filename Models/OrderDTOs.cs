@@ -3,60 +3,196 @@ using System.ComponentModel.DataAnnotations;
 namespace PottaAPI.Models
 {
     /// <summary>
-    /// DTO for creating a new waiting transaction (mobile order)
+    /// Request model for creating a new waiting transaction (mobile order)
     /// Matches the WPF app's WaitingTransaction model
     /// </summary>
+    /// <example>
+    /// {
+    ///   "staffId": 1,
+    ///   "customerId": "CUST001",
+    ///   "tableId": "TBL001",
+    ///   "tableNumber": 5,
+    ///   "tableName": "Table 5",
+    ///   "items": [
+    ///     {
+    ///       "productId": "PROD001",
+    ///       "name": "Burger",
+    ///       "quantity": 2,
+    ///       "price": 5000,
+    ///       "discount": 0,
+    ///       "taxId": "TAX001",
+    ///       "taxable": true,
+    ///       "unitType": "Base",
+    ///       "unitsPerPackage": 1
+    ///     }
+    ///   ]
+    /// }
+    /// </example>
     public class CreateWaitingTransactionDto
     {
+        /// <summary>
+        /// Staff member ID creating the order (required)
+        /// </summary>
+        /// <example>1</example>
         [Required(ErrorMessage = "StaffId is required")]
         [Range(1, int.MaxValue, ErrorMessage = "StaffId must be greater than 0")]
         public int StaffId { get; set; }
 
+        /// <summary>
+        /// Customer ID (optional)
+        /// </summary>
+        /// <example>CUST001</example>
         public string? CustomerId { get; set; }
+
+        /// <summary>
+        /// Table ID (optional)
+        /// </summary>
+        /// <example>TBL001</example>
         public string? TableId { get; set; }
+
+        /// <summary>
+        /// Table number (optional)
+        /// </summary>
+        /// <example>5</example>
         public int? TableNumber { get; set; }
+
+        /// <summary>
+        /// Table name (optional)
+        /// </summary>
+        /// <example>Table 5</example>
         public string? TableName { get; set; }
 
+        /// <summary>
+        /// List of order items (at least one required)
+        /// </summary>
         [Required(ErrorMessage = "Items list is required")]
         [MinLength(1, ErrorMessage = "Order must contain at least one item")]
         public List<WaitingTransactionItemDto> Items { get; set; } = new();
     }
 
     /// <summary>
-    /// DTO for waiting transaction items (cart items)
+    /// Order item model for waiting transaction (cart items)
     /// Matches the WPF app's CartItem model EXACTLY
     /// </summary>
+    /// <example>
+    /// {
+    ///   "productId": "PROD001",
+    ///   "name": "Burger",
+    ///   "quantity": 2,
+    ///   "price": 5000,
+    ///   "discount": 0,
+    ///   "taxId": "TAX001",
+    ///   "taxable": true,
+    ///   "unitType": "Base",
+    ///   "unitsPerPackage": 1,
+    ///   "appliedModifiers": [
+    ///     {
+    ///       "modifierId": "MOD001",
+    ///       "modifierName": "Extra Cheese",
+    ///       "priceChange": 500
+    ///     }
+    ///   ]
+    /// }
+    /// </example>
     public class WaitingTransactionItemDto
     {
+        /// <summary>
+        /// Product ID (required)
+        /// </summary>
+        /// <example>PROD001</example>
         [Required(ErrorMessage = "ProductId is required")]
         public string ProductId { get; set; } = "";
 
+        /// <summary>
+        /// Product name (required)
+        /// </summary>
+        /// <example>Burger</example>
         [Required(ErrorMessage = "Product name is required")]
         public string Name { get; set; } = "";
 
+        /// <summary>
+        /// Quantity ordered (minimum 1)
+        /// </summary>
+        /// <example>2</example>
         [Range(1, int.MaxValue, ErrorMessage = "Quantity must be at least 1")]
         public int Quantity { get; set; }
 
+        /// <summary>
+        /// Unit price
+        /// </summary>
+        /// <example>5000</example>
         [Range(0, double.MaxValue, ErrorMessage = "Price cannot be negative")]
         public decimal Price { get; set; }
 
+        /// <summary>
+        /// Discount amount
+        /// </summary>
+        /// <example>0</example>
         public decimal Discount { get; set; } = 0;
+
+        /// <summary>
+        /// Tax ID (optional)
+        /// </summary>
+        /// <example>TAX001</example>
         public string? TaxId { get; set; }
+
+        /// <summary>
+        /// Is item taxable
+        /// </summary>
+        /// <example>true</example>
         public bool Taxable { get; set; } = true;
+
+        /// <summary>
+        /// Staff ID (optional)
+        /// </summary>
+        /// <example>1</example>
         public int? StaffId { get; set; }
+
+        /// <summary>
+        /// Is item completed
+        /// </summary>
+        /// <example>false</example>
         public bool IsCompleted { get; set; } = false;
+
+        /// <summary>
+        /// Creation date
+        /// </summary>
+        /// <example>2024-01-15T10:30:00</example>
         public DateTime CreatedDate { get; set; } = DateTime.Now;
         
-        // Modifier support (matches WPF app exactly)
+        /// <summary>
+        /// Applied modifiers (optional)
+        /// </summary>
         public List<AppliedModifierDto>? AppliedModifiers { get; set; }
+
+        /// <summary>
+        /// Modifier selection ID (optional)
+        /// </summary>
+        /// <example>MODSEL001</example>
         public string? ModifierSelectionId { get; set; }
         
-        // Multi-unit pricing support
+        /// <summary>
+        /// Unit type for multi-unit pricing
+        /// </summary>
+        /// <example>Base</example>
         public string UnitType { get; set; } = "Base";
+
+        /// <summary>
+        /// Units per package for inventory tracking
+        /// </summary>
+        /// <example>1</example>
         public decimal UnitsPerPackage { get; set; } = 1;
         
-        // Bundle/Recipe flags
+        /// <summary>
+        /// Is this a bundle item
+        /// </summary>
+        /// <example>false</example>
         public bool IsBundle { get; set; } = false;
+
+        /// <summary>
+        /// Is this a recipe item
+        /// </summary>
+        /// <example>false</example>
         public bool IsRecipe { get; set; } = false;
 
         // Calculated properties (matches WPF app)
@@ -83,13 +219,40 @@ namespace PottaAPI.Models
     }
 
     /// <summary>
-    /// DTO for applied modifiers (matches WPF app's AppliedModifier model)
+    /// Applied modifier model (matches WPF app's AppliedModifier model)
     /// </summary>
+    /// <example>
+    /// {
+    ///   "modifierId": "MOD001",
+    ///   "modifierName": "Extra Cheese",
+    ///   "priceChange": 500,
+    ///   "recipeId": null
+    /// }
+    /// </example>
     public class AppliedModifierDto
     {
+        /// <summary>
+        /// Modifier ID
+        /// </summary>
+        /// <example>MOD001</example>
         public string ModifierId { get; set; } = "";
+
+        /// <summary>
+        /// Modifier name
+        /// </summary>
+        /// <example>Extra Cheese</example>
         public string ModifierName { get; set; } = "";
+
+        /// <summary>
+        /// Price change (can be positive or negative)
+        /// </summary>
+        /// <example>500</example>
         public decimal PriceChange { get; set; } = 0;
+
+        /// <summary>
+        /// Recipe ID (optional)
+        /// </summary>
+        /// <example>null</example>
         public string? RecipeId { get; set; }
     }
 
