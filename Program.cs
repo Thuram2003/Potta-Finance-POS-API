@@ -112,7 +112,7 @@ try
     builder.Services.AddHealthChecks();
 
 
-    // Add static files support for serving test page
+    // Add static files support for serving test page and images
     builder.Services.AddDirectoryBrowser();
 
     // Configure CORS from appsettings
@@ -205,11 +205,31 @@ builder.Services.AddSingleton<ITaxService>(provider =>
     return new TaxService(connectionStringProvider, logger);
 });
 
+// Register discount services
+builder.Services.AddSingleton<IDiscountService>(provider =>
+{
+    var connectionStringProvider = provider.GetRequiredService<IConnectionStringProvider>();
+    var logger = provider.GetRequiredService<ILogger<DiscountService>>();
+    return new DiscountService(connectionStringProvider, logger);
+});
+
 // Register floor plan services
 builder.Services.AddSingleton<IFloorPlanService>(provider =>
 {
     var connectionStringProvider = provider.GetRequiredService<IConnectionStringProvider>();
     return new FloorPlanService(connectionStringProvider.GetConnectionString());
+});
+
+// Register restaurant operations services
+builder.Services.AddSingleton<IRestaurantOperationsService>(provider =>
+{
+    var databaseService = provider.GetRequiredService<IDatabaseService>() as DatabaseService 
+        ?? throw new InvalidOperationException("DatabaseService is required");
+    var orderService = provider.GetRequiredService<IOrderService>();
+    var staffService = provider.GetRequiredService<IStaffService>();
+    var tableService = provider.GetRequiredService<ITableService>();
+    
+    return new RestaurantOperationsService(databaseService, orderService, staffService, tableService);
 });
 
     var app = builder.Build();
@@ -246,8 +266,15 @@ builder.Services.AddSingleton<IFloorPlanService>(provider =>
     // Global exception handler (must be early in pipeline)
     app.UseGlobalExceptionHandler();
 
-    // Add IP Rate Limiting
-    app.UseIpRateLimiting();
+    // Add IP Rate Limiting (but exempt static files)
+    app.UseWhen(
+        context => !context.Request.Path.StartsWithSegments("/images") && 
+                   !context.Request.Path.StartsWithSegments("/swagger") &&
+                   !context.Request.Path.Value.EndsWith(".html") &&
+                   !context.Request.Path.Value.EndsWith(".css") &&
+                   !context.Request.Path.Value.EndsWith(".js"),
+        appBuilder => appBuilder.UseIpRateLimiting()
+    );
 
     // Add Response Caching
     app.UseResponseCaching();
@@ -267,8 +294,38 @@ app.Use(async (context, next) =>
     await next();
 });
 
-    // Enable static files and directory browsing
+    // Enable static files from wwwroot (default)
     app.UseStaticFiles();
+
+    // Serve images from desktop application's Images folder
+    var desktopAppImagePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, apiOptions.ImageBasePath);
+    var resolvedImagePath = Path.GetFullPath(desktopAppImagePath);
+    
+    if (Directory.Exists(resolvedImagePath))
+    {
+        Log.Information("✓ Serving images from: {ImagePath}", resolvedImagePath);
+        app.UseStaticFiles(new StaticFileOptions
+        {
+            FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(resolvedImagePath),
+            RequestPath = "/images",
+            ServeUnknownFileTypes = true,
+            DefaultContentType = "image/png",
+            OnPrepareResponse = ctx =>
+            {
+                // Add CORS headers for images
+                ctx.Context.Response.Headers.Append("Access-Control-Allow-Origin", "*");
+                // Cache images for 1 hour
+                ctx.Context.Response.Headers.Append("Cache-Control", "public,max-age=3600");
+            }
+        });
+    }
+    else
+    {
+        Log.Warning("✗ Desktop app image folder not found at: {ImagePath}", resolvedImagePath);
+        Log.Warning("  Configured path: {ConfigPath}", apiOptions.ImageBasePath);
+        Log.Warning("  Image serving may not work correctly");
+    }
+
     app.UseDirectoryBrowser();
 
     app.UseCors(corsOptions.PolicyName);

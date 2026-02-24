@@ -269,6 +269,7 @@ namespace PottaAPI.Models
         public string? TableName { get; set; }
         public int? StaffId { get; set; }
         public string Status { get; set; } = "Pending";
+        public string? Notes { get; set; }
         public DateTime CreatedDate { get; set; }
         public DateTime ModifiedDate { get; set; }
 

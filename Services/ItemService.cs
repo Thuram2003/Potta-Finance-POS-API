@@ -800,17 +800,26 @@ namespace PottaAPI.Services
         }
 
         /// <summary>
-        /// Converts Windows file paths to URL-friendly paths by replacing backslashes with forward slashes
+        /// Converts Windows file paths to API-accessible URLs
         /// </summary>
         /// <param name="path">The file path from the database (e.g., "Images\\Products\\image.png")</param>
-        /// <returns>URL-friendly path (e.g., "Images/Products/image.png")</returns>
+        /// <returns>API URL path (e.g., "/images/Products/image.png")</returns>
         private string ConvertPathToUrl(string path)
         {
             if (string.IsNullOrEmpty(path))
                 return string.Empty;
             
-            // Replace Windows backslashes with forward slashes for URLs
-            return path.Replace("\\", "/");
+            // Replace Windows backslashes with forward slashes
+            var urlPath = path.Replace("\\", "/");
+            
+            // Remove "Images/" prefix if present (case-insensitive)
+            if (urlPath.StartsWith("Images/", StringComparison.OrdinalIgnoreCase))
+            {
+                urlPath = urlPath.Substring(7); // Remove "Images/" (7 characters)
+            }
+            
+            // Return as API path (will be served from /images endpoint)
+            return $"/images/{urlPath}";
         }
 
         private ItemDto? CreateItemFromDataReader(SqliteDataReader reader, string itemType)

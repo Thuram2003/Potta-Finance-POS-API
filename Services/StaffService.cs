@@ -193,6 +193,58 @@ namespace PottaAPI.Services
             }
         }
 
+        // Get staff info by ID
+        public async Task<StaffDTO?> GetStaffByIdAsync(int staffId)
+        {
+            try
+            {
+                using var connection = new SqliteConnection(_connectionString);
+                await connection.OpenAsync();
+
+                var query = @"
+                    SELECT Id, FirstName, LastName, Email, Phone, DailyCode, 
+                           CodeGeneratedDate, IsActive
+                    FROM Staff 
+                    WHERE Id = @StaffId";
+
+                using var command = new SqliteCommand(query, connection);
+                command.Parameters.AddWithValue("@StaffId", staffId);
+
+                using var reader = await command.ExecuteReaderAsync();
+                if (await reader.ReadAsync())
+                {
+                    var codeGeneratedDate = reader["CodeGeneratedDate"] != DBNull.Value 
+                        ? DateTime.Parse(reader["CodeGeneratedDate"].ToString()!) 
+                        : DateTime.MinValue;
+                    var codeExpiresAt = codeGeneratedDate != DateTime.MinValue 
+                        ? codeGeneratedDate.AddHours(CODE_EXPIRY_HOURS) 
+                        : DateTime.MinValue;
+                    var isExpired = codeGeneratedDate != DateTime.MinValue && DateTime.Now > codeExpiresAt;
+
+                    return new StaffDTO
+                    {
+                        Id = Convert.ToInt32(reader["Id"]),
+                        FirstName = reader["FirstName"]?.ToString() ?? "",
+                        LastName = reader["LastName"]?.ToString() ?? "",
+                        Email = reader["Email"]?.ToString() ?? "",
+                        Phone = reader["Phone"]?.ToString() ?? "",
+                        DailyCode = reader["DailyCode"]?.ToString() ?? "",
+                        CodeGeneratedDate = codeGeneratedDate,
+                        CodeExpiresAt = codeExpiresAt,
+                        IsCodeExpired = isExpired,
+                        IsActive = Convert.ToInt32(reader["IsActive"]) == 1
+                    };
+                }
+
+                return null;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error getting staff by ID: {ex.Message}");
+                return null;
+            }
+        }
+
         // Get QR code data for staff member
         public async Task<StaffQRCodeResponse> GetStaffQRCodeDataAsync(int staffId, string apiUrl)
         {

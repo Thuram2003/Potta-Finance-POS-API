@@ -14,5 +14,7 @@ namespace PottaAPI.Services
         Task<bool> UpdateTableStatusAsync(string tableId, UpdateTableStatusDTO statusDto);
         Task<List<SeatDTO>> GetTableSeatsAsync(string tableId);
         Task<bool> UpdateSeatStatusAsync(string seatId, UpdateSeatStatusDTO statusDto);
+        Task<bool> AreAllSeatsOccupiedAsync(string tableId);
+        Task<bool> AnySeatsOccupiedAsync(string tableId);
     }
 }

@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Potta API - Image Test</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        h1 {
+            color: #333;
+            border-bottom: 3px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        .test-section {
+            background: white;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .image-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .image-card {
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 10px;
+            background: #fafafa;
+        }
+        .image-card img {
+            width: 100%;
+            height: 200px;
+            object-fit: cover;
+            border-radius: 4px;
+            background: #e0e0e0;
+        }
+        .image-card p {
+            margin: 10px 0 0 0;
+            font-size: 12px;
+            color: #666;
+            word-break: break-all;
+        }
+        .status {
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-weight: bold;
+            display: inline-block;
+            margin: 10px 0;
+        }
+        .status.success {
+            background: #4CAF50;
+            color: white;
+        }
+        .status.error {
+            background: #f44336;
+            color: white;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <h1>Potta API - Image Serving Test</h1>
+    
+    <div class="test-section">
+        <h2>API Status</h2>
+        <div id="apiStatus" class="loading">Checking API connection...</div>
+    </div>
+
+    <div class="test-section">
+        <h2>Test Images from API</h2>
+        <button onclick="loadItems()">Load Items with Images</button>
+        <div id="itemsContainer" class="loading">Click button to load items...</div>
+    </div>
+
+    <script>
+        const API_BASE = window.location.origin;
+
+        // Check API status
+        async function checkApiStatus() {
+            try {
+                const response = await fetch(`${API_BASE}/health`);
+                if (response.ok) {
+                    document.getElementById('apiStatus').innerHTML = 
+                        '<span class="status success">✓ API is running</span>';
+                } else {
+                    document.getElementById('apiStatus').innerHTML = 
+                        '<span class="status error">✗ API returned error</span>';
+                }
+            } catch (error) {
+                document.getElementById('apiStatus').innerHTML = 
+                    '<span class="status error">✗ Cannot connect to API</span>';
+            }
+        }
+
+        // Load items from API
+        async function loadItems() {
+            const container = document.getElementById('itemsContainer');
+            container.innerHTML = '<div class="loading">Loading items...</div>';
+
+            try {
+                const response = await fetch(`${API_BASE}/api/items?page=1&pageSize=12`);
+                const data = await response.json();
+
+                if (data.success && data.data && data.data.length > 0) {
+                    const items = data.data;
+                    container.innerHTML = `
+                        <p>Found ${items.length} items</p>
+                        <div class="image-grid">
+                            ${items.map(item => `
+                                <div class="image-card">
+                                    <img 
+                                        src="${item.imagePath || 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22200%22 height=%22200%22%3E%3Crect fill=%22%23ddd%22 width=%22200%22 height=%22200%22/%3E%3Ctext x=%2250%25%22 y=%2250%25%22 text-anchor=%22middle%22 dy=%22.3em%22 fill=%22%23999%22%3ENo Image%3C/text%3E%3C/svg%3E'}" 
+                                        alt="${item.name}"
+                                        onerror="this.onerror=null; this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22200%22 height=%22200%22%3E%3Crect fill=%22%23ffebee%22 width=%22200%22 height=%22200%22/%3E%3Ctext x=%2250%25%22 y=%2250%25%22 text-anchor=%22middle%22 dy=%22.3em%22 fill=%22%23c62828%22 font-size=%2214%22%3EImage Not Found%3C/text%3E%3C/svg%3E'; this.style.border='2px solid red';"
+                                    />
+                                    <p><strong>${item.name}</strong></p>
+                                    <p>SKU: ${item.sku}</p>
+                                    <p>Price: ${item.formattedPrice}</p>
+                                    <p style="font-size: 10px; color: #999;">
+                                        Image: ${item.imagePath || 'No image'}
+                                    </p>
+                                </div>
+                            `).join('')}
+                        </div>
+                    `;
+                } else {
+                    container.innerHTML = '<p>No items found or API returned empty data</p>';
+                }
+            } catch (error) {
+                container.innerHTML = `<p class="status error">Error loading items: ${error.message}</p>`;
+            }
+        }
+
+        // Check API on page load
+        checkApiStatus();
+    </script>
+</body>
+</html>

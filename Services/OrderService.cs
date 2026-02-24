@@ -86,7 +86,7 @@ namespace PottaAPI.Services
             {
                 var sql = @"
                     SELECT TransactionId, CartItems, CustomerId, TableId, TableNumber, 
-                           TableName, StaffId, Status, CreatedDate, ModifiedDate
+                           TableName, StaffId, Status, Notes, CreatedDate, ModifiedDate
                     FROM WaitingTransactions";
 
                 if (staffId.HasValue)
@@ -148,6 +148,9 @@ namespace PottaAPI.Services
                                 ? Convert.ToInt32(reader["StaffId"]) 
                                 : null,
                             Status = reader["Status"]?.ToString() ?? "Pending",
+                            Notes = reader["Notes"] != DBNull.Value 
+                                ? reader["Notes"]?.ToString() 
+                                : null,
                             CreatedDate = Convert.ToDateTime(reader["CreatedDate"]),
                             ModifiedDate = Convert.ToDateTime(reader["ModifiedDate"]),
                             Items = items
@@ -181,7 +184,7 @@ namespace PottaAPI.Services
             {
                 var sql = @"
                     SELECT TransactionId, CartItems, CustomerId, TableId, TableNumber, 
-                           TableName, StaffId, Status, CreatedDate, ModifiedDate
+                           TableName, StaffId, Status, Notes, CreatedDate, ModifiedDate
                     FROM WaitingTransactions
                     WHERE TransactionId = @TransactionId";
 
@@ -227,6 +230,9 @@ namespace PottaAPI.Services
                             ? Convert.ToInt32(reader["StaffId"]) 
                             : null,
                         Status = reader["Status"]?.ToString() ?? "Pending",
+                        Notes = reader["Notes"] != DBNull.Value 
+                            ? reader["Notes"]?.ToString() 
+                            : null,
                         CreatedDate = Convert.ToDateTime(reader["CreatedDate"]),
                         ModifiedDate = Convert.ToDateTime(reader["ModifiedDate"]),
                         Items = items

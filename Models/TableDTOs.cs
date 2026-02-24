@@ -16,7 +16,7 @@ namespace PottaAPI.Models
         public string? TableName { get; set; }
         public int TableNumber { get; set; }
         public int Capacity { get; set; }
-        public string Status { get; set; } // Available, Occupied, Unpaid, Reserved, Cleaning, OutOfOrder
+        public string Status { get; set; } // Available, Occupied, Reserved, Not Available
         public string? CurrentCustomerId { get; set; }
         public string? CurrentTransactionId { get; set; }
         public string? Description { get; set; }
@@ -31,18 +31,19 @@ namespace PottaAPI.Models
         public string DisplayName => !string.IsNullOrEmpty(TableName) ? TableName : $"Table {TableNumber}";
         public bool IsAvailable => Status == "Available";
         public bool IsOccupied => Status == "Occupied";
-        public bool IsUnpaid => Status == "Unpaid";
+        public bool IsReserved => Status == "Reserved";
+        public bool IsNotAvailable => Status == "Not Available";
     }
 
     /// <summary>
     /// DTO for updating table status (unified endpoint)
-    /// Mobile use case: Update table status to Available, Occupied, Reserved, etc.
-    /// Replaces: ClearTable, ReserveTable, SetNotAvailable, SetUnpaid
+    /// Mobile use case: Update table status to Available, Occupied, Reserved, Not Available
+    /// Replaces: ClearTable, ReserveTable, SetNotAvailable
     /// </summary>
     public class UpdateTableStatusDTO
     {
         [Required]
-        public string Status { get; set; } // Available, Occupied, Unpaid, Reserved, Cleaning, OutOfOrder
+        public string Status { get; set; } // Available, Occupied, Reserved, Not Available
 
         public string? CustomerId { get; set; }
         public string? TransactionId { get; set; }

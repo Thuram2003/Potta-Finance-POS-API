@@ -10,10 +10,8 @@ namespace PottaAPI.Validators
         {
             "Available",
             "Occupied",
-            "Unpaid",
             "Reserved",
-            "Cleaning",
-            "OutOfOrder"
+            "Not Available"
         };
 
         public UpdateTableStatusValidator()
@@ -33,8 +31,8 @@ namespace PottaAPI.Validators
 
             RuleFor(x => x.TransactionId)
                 .NotEmpty()
-                .When(x => x.Status == "Occupied" || x.Status == "Unpaid")
-                .WithMessage("TransactionId is required when status is Occupied or Unpaid")
+                .When(x => x.Status == "Occupied")
+                .WithMessage("TransactionId is required when status is Occupied")
                 .MaximumLength(50)
                 .WithMessage("TransactionId cannot exceed 50 characters");
         }

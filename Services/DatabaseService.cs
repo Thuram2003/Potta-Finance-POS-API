@@ -293,6 +293,12 @@ namespace PottaAPI.Services
             return $"{len:0.##} {sizes[order]}";
         }
 
-
+        /// <summary>
+        /// Get the connection string for direct database access
+        /// </summary>
+        public string GetConnectionString()
+        {
+            return _connectionString;
+        }
     }
 }

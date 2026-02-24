@@ -9,6 +9,7 @@ namespace PottaAPI.Services
         Task<StaffLoginResponse> LoginWithDailyCodeAsync(string dailyCode);
         Task<CodeValidationResponse> ValidateCodeAsync(string dailyCode);
         Task<StaffDTO?> GetStaffByCodeAsync(string dailyCode);
+        Task<StaffDTO?> GetStaffByIdAsync(int staffId);
         Task<StaffQRCodeResponse> GetStaffQRCodeDataAsync(int staffId, string apiUrl);
     }
 }

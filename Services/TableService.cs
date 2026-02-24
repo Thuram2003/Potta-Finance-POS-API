@@ -7,11 +7,7 @@ using PottaAPI.Models;
 
 namespace PottaAPI.Services
 {
-    /// <summary>
-    /// Simplified table service implementation for mobile device operations.
-    /// Focuses on read operations and status updates only.
-    /// Table creation/editing/deletion is handled by desktop UI.
-    /// </summary>
+    // Table service for mobile operations (read-only, status updates)
     public class TableService : ITableService
     {
         private readonly string _connectionString;
@@ -173,9 +169,54 @@ namespace PottaAPI.Services
             return rowsAffected > 0;
         }
 
+        public async Task<bool> AreAllSeatsOccupiedAsync(string tableId)
+        {
+            using var connection = new SqliteConnection(_connectionString);
+            await connection.OpenAsync();
+
+            var command = connection.CreateCommand();
+            command.CommandText = @"
+                SELECT COUNT(*) as TotalSeats,
+                       SUM(CASE WHEN status = 'Occupied' THEN 1 ELSE 0 END) as OccupiedSeats
+                FROM Seats
+                WHERE tableId = @tableId AND isActive = 1";
+
+            command.Parameters.AddWithValue("@tableId", tableId);
+
+            using var reader = await command.ExecuteReaderAsync();
+            if (await reader.ReadAsync())
+            {
+                var totalSeats = Convert.ToInt32(reader["TotalSeats"]);
+                var occupiedSeats = Convert.ToInt32(reader["OccupiedSeats"]);
+
+                // All seats are occupied if total > 0 and total == occupied
+                return totalSeats > 0 && totalSeats == occupiedSeats;
+            }
+
+            return false;
+        }
+
+        public async Task<bool> AnySeatsOccupiedAsync(string tableId)
+        {
+            using var connection = new SqliteConnection(_connectionString);
+            await connection.OpenAsync();
+
+            var command = connection.CreateCommand();
+            command.CommandText = @"
+                SELECT COUNT(*)
+                FROM Seats
+                WHERE tableId = @tableId AND isActive = 1 AND status = 'Occupied'";
+
+            command.Parameters.AddWithValue("@tableId", tableId);
+
+            var count = Convert.ToInt32(await command.ExecuteScalarAsync());
+            return count > 0;
+        }
+
         #endregion
 
         #region Helper Methods
+
 
         private TableDTO MapReaderToTableDTO(SqliteDataReader reader)
         {

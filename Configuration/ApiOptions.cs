@@ -26,5 +26,10 @@ namespace PottaAPI.Configuration
         /// API description for documentation
         /// </summary>
         public string Description { get; set; } = "REST API for Potta Finance POS System";
+
+        /// <summary>
+        /// Base path to the desktop application's Images folder (relative to API executable)
+        /// </summary>
+        public string ImageBasePath { get; set; } = "../Potta Finance/Images";
     }
 }

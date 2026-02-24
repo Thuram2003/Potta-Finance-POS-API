@@ -88,8 +88,8 @@ namespace PottaAPI.Controllers
 
         /// <summary>
         /// Update table status (unified endpoint for all status changes)
-        /// Mobile use case: Mark table as Occupied, Reserved, Available, etc.
-        /// Replaces: /clear, /reserve, /not-available, /unpaid endpoints
+        /// Mobile use case: Mark table as Occupied, Reserved, Available, Not Available
+        /// Replaces: /clear, /reserve, /not-available endpoints
         /// </summary>
         [HttpPatch("{tableId}/status")]
         [ProducesResponseType(200)]
