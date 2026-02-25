@@ -38,9 +38,11 @@ namespace PottaAPI.Services
         
         // Print Bill Operations
         Task<PrintBillResponse> CreatePrintBillRequestAsync(PrintBillRequest request);
+        Task<PrintBillByTableResponse> CreatePrintBillByTableRequestAsync(PrintBillByTableRequest request);
         Task<List<PrintBillRequestDTO>> GetPendingPrintBillRequestsAsync();
         Task<bool> CompletePrintBillRequestAsync(string requestId, string? completedBy);
         Task<bool> CancelPrintBillRequestAsync(string requestId);
+
         
         // Pay Entire Bill Operations
         Task<PayEntireBillResponse> CreatePayEntireBillRequestAsync(PayEntireBillRequest request);

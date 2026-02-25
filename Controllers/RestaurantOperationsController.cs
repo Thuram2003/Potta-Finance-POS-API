@@ -463,6 +463,41 @@ namespace PottaAPI.Controllers
             }
         }
 
+        /// <summary>
+        /// Create print bill requests for ALL open orders on a specific table at once.
+        /// The desktop will receive all requests via polling and show a single combined dialog.
+        /// </summary>
+        /// <param name="request">Table ID, staff ID, and optional notes</param>
+        /// <returns>Number of requests created and list of request IDs</returns>
+        [HttpPost("print-bill-by-table")]
+        [ProducesResponseType(typeof(PrintBillByTableResponse), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status404NotFound)]
+        public async Task<IActionResult> CreatePrintBillByTableRequest([FromBody] PrintBillByTableRequest request)
+        {
+            try
+            {
+                var response = await _restaurantOperationsService.CreatePrintBillByTableRequestAsync(request);
+                return Ok(response);
+            }
+            catch (KeyNotFoundException ex)
+            {
+                return NotFound(new ErrorResponseDto
+                {
+                    Error = "Resource not found",
+                    Details = ex.Message
+                });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(new ErrorResponseDto
+                {
+                    Error = "Invalid operation",
+                    Details = ex.Message
+                });
+            }
+        }
+
         #region Pay Entire Bill Endpoints
 
         /// <summary>

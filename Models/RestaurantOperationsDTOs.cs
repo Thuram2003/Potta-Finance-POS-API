@@ -738,4 +738,54 @@ namespace PottaAPI.Models
         public string Message { get; set; } = string.Empty;
     }
 
+    // =============================================
+    // PRINT BILL BY TABLE DTOs
+    // =============================================
+
+    /// <summary>
+    /// Request to print bills for ALL open orders on a specific table at once
+    /// </summary>
+    public class PrintBillByTableRequest
+    {
+        /// <summary>
+        /// Table ID whose orders should all be printed
+        /// </summary>
+        /// <example>TBL-004</example>
+        [Required(ErrorMessage = "Table ID is required")]
+        public string TableId { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Staff ID requesting the prints
+        /// </summary>
+        /// <example>3</example>
+        [Required(ErrorMessage = "Staff ID is required")]
+        public int StaffId { get; set; }
+
+        /// <summary>
+        /// Optional notes for all requests
+        /// </summary>
+        [MaxLength(200, ErrorMessage = "Notes cannot exceed 200 characters")]
+        public string? Notes { get; set; }
+    }
+
+    /// <summary>
+    /// Response after creating print-bill requests for all orders on a table
+    /// </summary>
+    public class PrintBillByTableResponse
+    {
+        /// <summary>Number of print bill requests created</summary>
+        public int RequestCount { get; set; }
+
+        /// <summary>Table ID</summary>
+        public string TableId { get; set; } = string.Empty;
+
+        /// <summary>Table name</summary>
+        public string? TableName { get; set; }
+
+        /// <summary>List of created request IDs</summary>
+        public List<string> RequestIds { get; set; } = new();
+
+        /// <summary>Success message</summary>
+        public string Message { get; set; } = string.Empty;
+    }
 

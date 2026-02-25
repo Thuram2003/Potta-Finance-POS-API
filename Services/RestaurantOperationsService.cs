@@ -402,7 +402,9 @@ namespace PottaAPI.Services
         #region Print Bill Operations
 
         /// <summary>
-        /// Create a print bill request for desktop to process
+        /// Create a print bill request for desktop to process.
+        /// Idempotent: returns existing Pending request if one exists for the same transaction.
+        /// Blocks if a PayEntireBillRequest is already pending for the same transaction.
         /// </summary>
         public async Task<PrintBillResponse> CreatePrintBillRequestAsync(PrintBillRequest request)
         {
@@ -420,13 +422,57 @@ namespace PottaAPI.Services
                 throw new KeyNotFoundException($"Staff member {request.StaffId} not found");
             }
 
-            // 3. Generate request ID
-            var requestId = $"PBR-{DateTime.Now:yyyyMMddHHmmss}-{Guid.NewGuid().ToString("N").Substring(0, 8).ToUpper()}";
-
-            // 4. Insert print bill request
             using (var connection = new SqliteConnection(_connectionString))
             {
                 await connection.OpenAsync();
+
+                // 3. Check if a PayEntireBillRequest is already pending for this transaction
+                var conflictSql = @"
+                    SELECT COUNT(1) FROM PayEntireBillRequests
+                    WHERE transactionId = @transactionId AND status = 'Pending'";
+
+                using (var cmd = new SqliteCommand(conflictSql, connection))
+                {
+                    cmd.Parameters.AddWithValue("@transactionId", request.TransactionId);
+                    var count = Convert.ToInt64(await cmd.ExecuteScalarAsync());
+                    if (count > 0)
+                    {
+                        throw new InvalidOperationException(
+                            $"A payment request is already pending for transaction {request.TransactionId}. " +
+                            "Cannot create a print-bill request at the same time.");
+                    }
+                }
+
+                // 4. Check if a PrintBillRequest is already pending for this transaction (idempotency)
+                var existingSql = @"
+                    SELECT requestId, transactionId, staffId, staffName, tableId, tableName,
+                           requestedAt, status, notes
+                    FROM PrintBillRequests
+                    WHERE transactionId = @transactionId AND status = 'Pending'
+                    LIMIT 1";
+
+                using (var cmd = new SqliteCommand(existingSql, connection))
+                {
+                    cmd.Parameters.AddWithValue("@transactionId", request.TransactionId);
+                    using var reader = await cmd.ExecuteReaderAsync();
+                    if (await reader.ReadAsync())
+                    {
+                        // Return existing request instead of creating a duplicate
+                        return new PrintBillResponse
+                        {
+                            RequestId = reader.GetString(0),
+                            TransactionId = reader.GetString(1),
+                            StaffName = reader.GetString(3),
+                            TableName = reader.IsDBNull(5) ? null : reader.GetString(5),
+                            RequestedAt = reader.GetDateTime(6),
+                            Status = reader.GetString(7),
+                            Message = "Existing pending print bill request returned (no duplicate created)"
+                        };
+                    }
+                }
+
+                // 5. Generate new request ID and insert
+                var requestId = $"PBR-{DateTime.Now:yyyyMMddHHmmss}-{Guid.NewGuid().ToString("N").Substring(0, 8).ToUpper()}";
 
                 var sql = @"
                     INSERT INTO PrintBillRequests 
@@ -448,17 +494,133 @@ namespace PottaAPI.Services
 
                     await command.ExecuteNonQueryAsync();
                 }
+
+                return new PrintBillResponse
+                {
+                    RequestId = requestId,
+                    TransactionId = request.TransactionId,
+                    StaffName = $"{staff.FirstName} {staff.LastName}",
+                    TableName = transaction.TableName,
+                    RequestedAt = DateTime.Now,
+                    Status = "Pending",
+                    Message = "Print bill request created successfully"
+                };
+            }
+        }
+
+        /// <summary>
+        /// Create print bill requests for ALL open orders on a specific table.
+        /// One PrintBillRequest is created per open order. The desktop desktop polls 
+        /// GetPendingPrintBillRequests and receives all of them, then shows a single
+        /// combined dialog to approve printing all bills at once.
+        /// </summary>
+        public async Task<PrintBillByTableResponse> CreatePrintBillByTableRequestAsync(PrintBillByTableRequest request)
+        {
+            // 1. Validate staff exists
+            var staff = await _staffService.GetStaffByIdAsync(request.StaffId);
+            if (staff == null)
+            {
+                throw new KeyNotFoundException($"Staff member {request.StaffId} not found");
             }
 
-            return new PrintBillResponse
+            // 2. Validate table exists
+            var table = await _tableService.GetTableByIdAsync(request.TableId);
+            if (table == null)
             {
-                RequestId = requestId,
-                TransactionId = request.TransactionId,
-                StaffName = $"{staff.FirstName} {staff.LastName}",
-                TableName = transaction.TableName,
-                RequestedAt = DateTime.Now,
-                Status = "Pending",
-                Message = "Print bill request created successfully"
+                throw new KeyNotFoundException($"Table {request.TableId} not found");
+            }
+
+            // 3. Get all open (waiting) transactions for this table
+            var allTransactions = await _orderService.GetWaitingTransactionsAsync();
+            var tableTransactions = allTransactions
+                .Where(t => t.TableId == request.TableId)
+                .ToList();
+
+            if (tableTransactions.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    $"No open orders found for table {table.TableName ?? request.TableId}");
+            }
+
+            var createdRequestIds = new List<string>();
+            var staffFullName = $"{staff.FirstName} {staff.LastName}";
+
+            using (var connection = new SqliteConnection(_connectionString))
+            {
+                await connection.OpenAsync();
+
+                foreach (var transaction in tableTransactions)
+                {
+                    // Check if a PayEntireBillRequest is already pending for this transaction — skip if so
+                    var conflictSql = @"
+                        SELECT COUNT(1) FROM PayEntireBillRequests
+                        WHERE transactionId = @transactionId AND status = 'Pending'";
+
+                    using (var conflictCmd = new SqliteCommand(conflictSql, connection))
+                    {
+                        conflictCmd.Parameters.AddWithValue("@transactionId", transaction.TransactionId);
+                        var cnt = Convert.ToInt64(await conflictCmd.ExecuteScalarAsync());
+                        if (cnt > 0) continue; // skip — payment already pending
+                    }
+
+                    // Check if a PrintBillRequest is already pending (idempotency per transaction)
+                    var existingSql = @"
+                        SELECT requestId FROM PrintBillRequests
+                        WHERE transactionId = @transactionId AND status = 'Pending'
+                        LIMIT 1";
+
+                    string? existingRequestId = null;
+                    using (var existCmd = new SqliteCommand(existingSql, connection))
+                    {
+                        existCmd.Parameters.AddWithValue("@transactionId", transaction.TransactionId);
+                        var result = await existCmd.ExecuteScalarAsync();
+                        existingRequestId = result as string;
+                    }
+
+                    if (existingRequestId != null)
+                    {
+                        // Reuse the existing request — don't create a duplicate
+                        createdRequestIds.Add(existingRequestId);
+                        continue;
+                    }
+
+                    // Create a new request for this transaction
+                    var requestId = $"PBR-{DateTime.Now:yyyyMMddHHmmssff}-{Guid.NewGuid().ToString("N").Substring(0, 6).ToUpper()}";
+
+                    var insertSql = @"
+                        INSERT INTO PrintBillRequests 
+                        (requestId, transactionId, staffId, staffName, tableId, tableName, requestedAt, status, notes)
+                        VALUES 
+                        (@requestId, @transactionId, @staffId, @staffName, @tableId, @tableName, @requestedAt, @status, @notes)";
+
+                    using (var insertCmd = new SqliteCommand(insertSql, connection))
+                    {
+                        insertCmd.Parameters.AddWithValue("@requestId", requestId);
+                        insertCmd.Parameters.AddWithValue("@transactionId", transaction.TransactionId);
+                        insertCmd.Parameters.AddWithValue("@staffId", request.StaffId);
+                        insertCmd.Parameters.AddWithValue("@staffName", staffFullName);
+                        insertCmd.Parameters.AddWithValue("@tableId", (object?)transaction.TableId ?? DBNull.Value);
+                        insertCmd.Parameters.AddWithValue("@tableName", (object?)transaction.TableName ?? DBNull.Value);
+                        insertCmd.Parameters.AddWithValue("@requestedAt", DateTime.Now);
+                        insertCmd.Parameters.AddWithValue("@status", "Pending");
+                        insertCmd.Parameters.AddWithValue("@notes", (object?)request.Notes ?? DBNull.Value);
+
+                        await insertCmd.ExecuteNonQueryAsync();
+                    }
+
+                    createdRequestIds.Add(requestId);
+                }
+            }
+
+            return new PrintBillByTableResponse
+            {
+                RequestCount = createdRequestIds.Count,
+                TableId = request.TableId,
+                TableName = table.TableName,
+                RequestIds = createdRequestIds,
+                Message = createdRequestIds.Count == 0
+                    ? "No new print requests created (payment requests already pending for all orders)"
+                    : $"Created {createdRequestIds.Count} print bill request(s) for {table.TableName ?? request.TableId}"
             };
         }
 
@@ -557,6 +719,7 @@ namespace PottaAPI.Services
         }
 
         #endregion
+
 
         #region Pay Entire Bill Operations
 
