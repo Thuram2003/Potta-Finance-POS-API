@@ -8,7 +8,6 @@ namespace PottaAPI.Services
         /// <summary>
         /// Get the database connection string
         /// </summary>
-        /// <returns>Connection string</returns>
         string GetConnectionString();
     }
 }

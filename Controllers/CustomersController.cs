@@ -22,7 +22,6 @@ namespace PottaAPI.Controllers
         /// <summary>
         /// Get all active customers
         /// </summary>
-        /// <returns>List of active customers</returns>
         [HttpGet]
         [ResponseCache(Duration = 30, Location = ResponseCacheLocation.Any, VaryByQueryKeys = new string[] { })]
         public async Task<ActionResult<ApiResponseDto<List<CustomerDto>>>> GetAllCustomers()
@@ -50,8 +49,6 @@ namespace PottaAPI.Controllers
         /// <summary>
         /// Get customer by ID
         /// </summary>
-        /// <param name="id">Customer ID</param>
-        /// <returns>Customer details if found</returns>
         [HttpGet("{id}")]
         [ResponseCache(Duration = 30, Location = ResponseCacheLocation.Any, VaryByQueryKeys = new string[] { "id" })]
         public async Task<ActionResult<ApiResponseDto<CustomerDto>>> GetCustomerById(string id)
@@ -89,11 +86,6 @@ namespace PottaAPI.Controllers
         /// <summary>
         /// Search customers by name, email, or phone
         /// </summary>
-        /// <param name="searchTerm">Search term (optional)</param>
-        /// <param name="page">Page number (default: 1)</param>
-        /// <param name="pageSize">Page size (default: 50, max: 100)</param>
-        /// <param name="includeInactive">Include inactive customers (default: false)</param>
-        /// <returns>Paginated search results</returns>
         [HttpGet("search")]
         public async Task<ActionResult<ApiResponseDto<CustomerSearchResponseDto>>> SearchCustomers(
             [FromQuery] string? searchTerm = null,
@@ -138,7 +130,6 @@ namespace PottaAPI.Controllers
         /// <summary>
         /// Get customer statistics
         /// </summary>
-        /// <returns>Customer statistics and insights</returns>
         [HttpGet("statistics")]
         public async Task<ActionResult<ApiResponseDto<CustomerStatisticsDto>>> GetCustomerStatistics()
         {

@@ -46,6 +46,8 @@ namespace PottaAPI.Models
         public string StockInfo => IsLowStock ? $"Low Stock ({InventoryOnHand:F2})" : $"{InventoryOnHand:F2} in stock";
         public string VariationDisplay => HasVariations ? $"{VariationCount} variations" : "";
         public List<ProductVariationDto> Variations { get; set; } = new();
+        public List<ModifierDto> Modifiers { get; set; } = new();
+        public List<ProductUnitPricingDto> UnitPricing { get; set; } = new();
     }
 
     /// <summary>

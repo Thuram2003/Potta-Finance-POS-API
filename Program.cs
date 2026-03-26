@@ -13,7 +13,6 @@ using FluentValidation.AspNetCore;
 using Serilog;
 using AspNetCoreRateLimit;
 
-// Configure Serilog early
 Log.Logger = new LoggerConfiguration()
     .WriteTo.Console()
     .CreateLogger();
@@ -26,28 +25,23 @@ try
 
     var builder = WebApplication.CreateBuilder(args);
 
-    // Configure Serilog from appsettings.json
     builder.Host.UseSerilog((context, services, configuration) => configuration
         .ReadFrom.Configuration(context.Configuration)
         .ReadFrom.Services(services)
         .Enrich.FromLogContext()
         .Enrich.WithThreadId());
 
-    // Bind configuration options
     var databaseOptions = builder.Configuration.GetSection(DatabaseOptions.SectionName).Get<DatabaseOptions>() ?? new DatabaseOptions();
     var apiOptions = builder.Configuration.GetSection(ApiOptions.SectionName).Get<ApiOptions>() ?? new ApiOptions();
     var corsOptions = builder.Configuration.GetSection(CorsOptions.SectionName).Get<CorsOptions>() ?? new CorsOptions();
 
-    // Register configuration options
     builder.Services.Configure<DatabaseOptions>(builder.Configuration.GetSection(DatabaseOptions.SectionName));
     builder.Services.Configure<ApiOptions>(builder.Configuration.GetSection(ApiOptions.SectionName));
     builder.Services.Configure<CorsOptions>(builder.Configuration.GetSection(CorsOptions.SectionName));
 
-    // Add services to the container.
     builder.Services.AddControllers();
     builder.Services.AddEndpointsApiExplorer();
     
-    // Configure Swagger (clean, no XML comments)
     builder.Services.AddSwaggerGen(c =>
     {
         c.SwaggerDoc("v1", new Microsoft.OpenApi.Models.OpenApiInfo
@@ -61,16 +55,12 @@ try
                 Email = "support@pottafinance.com"
             }
         });
-
-        // XML comments disabled - keeps Swagger clean and simple
     });
 
-    // Add FluentValidation
     builder.Services.AddValidatorsFromAssemblyContaining<Program>();
     builder.Services.AddFluentValidationAutoValidation();
     builder.Services.AddFluentValidationClientsideAdapters();
 
-    // Configure automatic validation error responses
     builder.Services.Configure<ApiBehaviorOptions>(options =>
     {
         options.InvalidModelStateResponseFactory = context =>
@@ -96,26 +86,19 @@ try
         };
     });
 
-    // Add Response Caching
     builder.Services.AddResponseCaching();
 
-    // Add Memory Cache for rate limiting
     builder.Services.AddMemoryCache();
 
-    // Add Rate Limiting
     builder.Services.Configure<IpRateLimitOptions>(builder.Configuration.GetSection("IpRateLimiting"));
     builder.Services.Configure<IpRateLimitPolicies>(builder.Configuration.GetSection("IpRateLimitPolicies"));
     builder.Services.AddInMemoryRateLimiting();
     builder.Services.AddSingleton<IRateLimitConfiguration, RateLimitConfiguration>();
 
-    // Add Health Checks (simplified - just check if API is running)
     builder.Services.AddHealthChecks();
 
-
-    // Add static files support for serving test page and images
     builder.Services.AddDirectoryBrowser();
 
-    // Configure CORS from appsettings
     builder.Services.AddCors(options =>
     {
         options.AddPolicy(corsOptions.PolicyName, policy =>
@@ -155,27 +138,22 @@ try
         });
     });
 
-// Register connection string provider
-builder.Services.AddSingleton<IConnectionStringProvider, ConnectionStringProvider>();
+    builder.Services.AddSingleton<IConnectionStringProvider, ConnectionStringProvider>();
 
-// Register database services
-builder.Services.AddSingleton<IDatabaseService, DatabaseService>();
+    builder.Services.AddSingleton<IDatabaseService, DatabaseService>();
 
-// Register customer services
-builder.Services.AddSingleton<ICustomerService>(provider =>
+    builder.Services.AddSingleton<ICustomerService>(provider =>
 {
     var connectionStringProvider = provider.GetRequiredService<IConnectionStringProvider>();
     return new CustomerService(connectionStringProvider.GetConnectionString());
 });
 
-// Register item services
 builder.Services.AddSingleton<IItemService>(provider =>
 {
     var connectionStringProvider = provider.GetRequiredService<IConnectionStringProvider>();
     return new ItemService(connectionStringProvider.GetConnectionString());
 });
 
-// Register order services
 builder.Services.AddSingleton<IOrderService>(provider =>
 {
     var connectionStringProvider = provider.GetRequiredService<IConnectionStringProvider>();
@@ -183,21 +161,18 @@ builder.Services.AddSingleton<IOrderService>(provider =>
     return new OrderService(connectionStringProvider.GetConnectionString(), taxService);
 });
 
-// Register table services
 builder.Services.AddSingleton<ITableService>(provider =>
 {
     var connectionStringProvider = provider.GetRequiredService<IConnectionStringProvider>();
     return new TableService(connectionStringProvider.GetConnectionString());
 });
 
-// Register staff services
 builder.Services.AddSingleton<IStaffService>(provider =>
 {
     var connectionStringProvider = provider.GetRequiredService<IConnectionStringProvider>();
     return new StaffService(connectionStringProvider.GetConnectionString());
 });
 
-// Register tax services
 builder.Services.AddSingleton<ITaxService>(provider =>
 {
     var connectionStringProvider = provider.GetRequiredService<IConnectionStringProvider>();
@@ -205,7 +180,6 @@ builder.Services.AddSingleton<ITaxService>(provider =>
     return new TaxService(connectionStringProvider, logger);
 });
 
-// Register discount services
 builder.Services.AddSingleton<IDiscountService>(provider =>
 {
     var connectionStringProvider = provider.GetRequiredService<IConnectionStringProvider>();
@@ -213,14 +187,12 @@ builder.Services.AddSingleton<IDiscountService>(provider =>
     return new DiscountService(connectionStringProvider, logger);
 });
 
-// Register floor plan services
 builder.Services.AddSingleton<IFloorPlanService>(provider =>
 {
     var connectionStringProvider = provider.GetRequiredService<IConnectionStringProvider>();
     return new FloorPlanService(connectionStringProvider.GetConnectionString());
 });
 
-// Register restaurant operations services
 builder.Services.AddSingleton<IRestaurantOperationsService>(provider =>
 {
     var databaseService = provider.GetRequiredService<IDatabaseService>() as DatabaseService 
@@ -235,9 +207,8 @@ builder.Services.AddSingleton<IRestaurantOperationsService>(provider =>
     var app = builder.Build();
 
     // Log environment and configuration
-    var environment = app.Environment.EnvironmentName;
     Log.Information("========================================");
-    Log.Information("Environment: {Environment}", environment);
+    Log.Information("Environment: {Environment}", app.Environment.EnvironmentName);
     Log.Information("Database file: {DatabaseFile}", databaseOptions.FileName);
     Log.Information("Database search paths: {SearchPaths}", string.Join(", ", databaseOptions.SearchPaths));
     Log.Information("API Port: {Port}", apiOptions.Port);
@@ -245,13 +216,9 @@ builder.Services.AddSingleton<IRestaurantOperationsService>(provider =>
     Log.Information("Allowed Origins: {Origins}", string.Join(", ", corsOptions.AllowedOrigins));
     Log.Information("========================================");
 
-    // Get and display the server IP address
     string serverIpAddress = GetServerIPAddress();
     Log.Information("Server IP Address: {IpAddress}", serverIpAddress);
 
-    // Configure the HTTP request pipeline.
-    
-    // Add Serilog request logging (real-time HTTP logs like NestJS)
     app.UseSerilogRequestLogging(options =>
     {
         options.MessageTemplate = "HTTP {RequestMethod} {RequestPath} responded {StatusCode} in {Elapsed:0.0000}ms";
@@ -263,10 +230,8 @@ builder.Services.AddSingleton<IRestaurantOperationsService>(provider =>
         };
     });
     
-    // Global exception handler (must be early in pipeline)
     app.UseGlobalExceptionHandler();
 
-    // Add IP Rate Limiting (but exempt static files)
     app.UseWhen(
         context => !context.Request.Path.StartsWithSegments("/images") && 
                    !context.Request.Path.StartsWithSegments("/swagger") &&
@@ -276,28 +241,23 @@ builder.Services.AddSingleton<IRestaurantOperationsService>(provider =>
         appBuilder => appBuilder.UseIpRateLimiting()
     );
 
-    // Add Response Caching
     app.UseResponseCaching();
 
-    // Enable Swagger in all environments (development and production)
     app.UseSwagger();
     app.UseSwaggerUI(Theme.Dark);
 
-// Redirect root URL to Swagger UI (must be before static files/dir browser)
-app.Use(async (context, next) =>
-{
+    app.Use(async (context, next) =>
+    {
     if (context.Request.Path == "/")
     {
         context.Response.Redirect("/swagger");
         return;
     }
     await next();
-});
+    });
 
-    // Enable static files from wwwroot (default)
     app.UseStaticFiles();
 
-    // Serve images from desktop application's Images folder
     var desktopAppImagePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, apiOptions.ImageBasePath);
     var resolvedImagePath = Path.GetFullPath(desktopAppImagePath);
     
@@ -312,9 +272,7 @@ app.Use(async (context, next) =>
             DefaultContentType = "image/png",
             OnPrepareResponse = ctx =>
             {
-                // Add CORS headers for images
                 ctx.Context.Response.Headers.Append("Access-Control-Allow-Origin", "*");
-                // Cache images for 1 hour
                 ctx.Context.Response.Headers.Append("Cache-Control", "public,max-age=3600");
             }
         });
@@ -331,14 +289,12 @@ app.Use(async (context, next) =>
     app.UseCors(corsOptions.PolicyName);
     app.UseAuthorization();
 
-    // Map Health Check endpoints
     app.MapHealthChecks("/health");
     app.MapHealthChecks("/health/ready");
     app.MapHealthChecks("/health/live");
 
     app.MapControllers();
 
-    // Test database connection on startup
     using (var scope = app.Services.CreateScope())
     {
         var dbService = scope.ServiceProvider.GetRequiredService<IDatabaseService>();

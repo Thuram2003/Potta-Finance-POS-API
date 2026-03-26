@@ -4,7 +4,6 @@ using System.Text.Json;
 
 namespace PottaAPI.Services
 {
-    // Order/transaction management service
     public class OrderService : IOrderService
     {
         private readonly string _connectionString;
@@ -20,7 +19,6 @@ namespace PottaAPI.Services
         {
             try
             {
-                // Calculate taxes for all items if tax service is available
                 if (_taxService != null)
                 {
                     await _taxService.UpdateOrderItemTaxesAsync(transaction.Items);
@@ -123,7 +121,6 @@ namespace PottaAPI.Services
                         var items = JsonSerializer.Deserialize<List<WaitingTransactionItemDto>>(itemsJson, jsonOptions) 
                             ?? new List<WaitingTransactionItemDto>();
 
-                        // Calculate taxes for items if tax service is available
                         if (_taxService != null && items.Count > 0)
                         {
                             await _taxService.UpdateOrderItemTaxesAsync(items);
@@ -205,7 +202,6 @@ namespace PottaAPI.Services
                     var items = JsonSerializer.Deserialize<List<WaitingTransactionItemDto>>(itemsJson, jsonOptions) 
                         ?? new List<WaitingTransactionItemDto>();
 
-                    // Calculate taxes for items if tax service is available
                     if (_taxService != null && items.Count > 0)
                     {
                         await _taxService.UpdateOrderItemTaxesAsync(items);
@@ -249,7 +245,6 @@ namespace PottaAPI.Services
         }
 
 
-
         public async Task<bool> UpdateWaitingTransactionStatusAsync(string transactionId, string status)
         {
             try
@@ -288,22 +283,99 @@ namespace PottaAPI.Services
         {
             try
             {
-                var sql = "DELETE FROM WaitingTransactions WHERE TransactionId = @TransactionId";
-                var parameters = new SqliteParameter[]
-                {
-                    new SqliteParameter("@TransactionId", transactionId)
-                };
-
                 using var connection = new SqliteConnection(_connectionString);
                 await connection.OpenAsync();
-                using var command = connection.CreateCommand();
-                command.CommandText = sql;
-                command.CommandTimeout = 30;
-                command.Parameters.AddRange(parameters);
+                using var transaction = connection.BeginTransaction();
 
-                int result = await command.ExecuteNonQueryAsync();
-                Console.WriteLine($"✅ Transaction deleted (ID: {transactionId}). Rows affected: {result}");
-                return result > 0;
+                try
+                {
+                    // Get the table ID before deleting
+                    var getTableSql = "SELECT TableId FROM WaitingTransactions WHERE TransactionId = @TransactionId";
+                    string? tableId = null;
+                    
+                    using (var getCommand = connection.CreateCommand())
+                    {
+                        getCommand.CommandText = getTableSql;
+                        getCommand.Parameters.AddWithValue("@TransactionId", transactionId);
+                        var result = await getCommand.ExecuteScalarAsync();
+                        tableId = result?.ToString();
+                    }
+
+                    // Delete the transaction
+                    var deleteSql = "DELETE FROM WaitingTransactions WHERE TransactionId = @TransactionId";
+                    int deleteResult;
+                    
+                    using (var deleteCommand = connection.CreateCommand())
+                    {
+                        deleteCommand.CommandText = deleteSql;
+                        deleteCommand.Parameters.AddWithValue("@TransactionId", transactionId);
+                        deleteResult = await deleteCommand.ExecuteNonQueryAsync();
+                    }
+
+                    if (deleteResult > 0 && !string.IsNullOrEmpty(tableId))
+                    {
+                        // Check if there are any remaining orders for this table
+                        var checkOrdersSql = "SELECT COUNT(*) FROM WaitingTransactions WHERE TableId = @TableId";
+                        long remainingOrders = 0;
+                        
+                        using (var checkCommand = connection.CreateCommand())
+                        {
+                            checkCommand.CommandText = checkOrdersSql;
+                            checkCommand.Parameters.AddWithValue("@TableId", tableId);
+                            var countResult = await checkCommand.ExecuteScalarAsync();
+                            remainingOrders = countResult != null ? Convert.ToInt64(countResult) : 0;
+                        }
+
+                        // If no more orders, clear table and seats
+                        if (remainingOrders == 0)
+                        {
+                            // Update table status to Available and clear transaction/customer
+                            var updateTableSql = @"
+                                UPDATE Tables 
+                                SET status = 'Available', 
+                                    currentTransactionId = NULL, 
+                                    currentCustomerId = NULL,
+                                    modifiedDate = CURRENT_TIMESTAMP
+                                WHERE tableId = @TableId";
+                            
+                            using (var updateTableCommand = connection.CreateCommand())
+                            {
+                                updateTableCommand.CommandText = updateTableSql;
+                                updateTableCommand.Parameters.AddWithValue("@TableId", tableId);
+                                await updateTableCommand.ExecuteNonQueryAsync();
+                            }
+
+                            // Update all seats to Available and clear customer
+                            var updateSeatsSql = @"
+                                UPDATE Seats 
+                                SET status = 'Available', 
+                                    customerId = NULL,
+                                    modifiedDate = CURRENT_TIMESTAMP
+                                WHERE tableId = @TableId";
+                            
+                            using (var updateSeatsCommand = connection.CreateCommand())
+                            {
+                                updateSeatsCommand.CommandText = updateSeatsSql;
+                                updateSeatsCommand.Parameters.AddWithValue("@TableId", tableId);
+                                await updateSeatsCommand.ExecuteNonQueryAsync();
+                            }
+
+                            Console.WriteLine($"✅ Transaction deleted and table {tableId} status reset to Available");
+                        }
+                        else
+                        {
+                            Console.WriteLine($"✅ Transaction deleted but table {tableId} still has {remainingOrders} remaining orders");
+                        }
+                    }
+
+                    transaction.Commit();
+                    return deleteResult > 0;
+                }
+                catch
+                {
+                    transaction.Rollback();
+                    throw;
+                }
             }
             catch (Exception ex)
             {
@@ -311,7 +383,6 @@ namespace PottaAPI.Services
                 throw new Exception($"Failed to delete transaction: {ex.Message}");
             }
         }
-
 
 
         public async Task<List<WaitingTransactionDto>> GetOrdersByTableAsync(string tableId)

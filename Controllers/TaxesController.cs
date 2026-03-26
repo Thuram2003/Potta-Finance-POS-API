@@ -80,13 +80,11 @@ namespace PottaAPI.Controllers
         /// - taxId: Tax configuration ID (if taxable)
         /// - taxable: Whether item is taxable
         /// - appliedModifiers: List of modifiers (optional)
-        /// 
         /// The calculation includes:
         /// - SubTotal: Sum of (Price + Modifiers) × Quantity - Discount for all items
         /// - Tax: Calculated based on tax type (Percentage or Flat Rate)
         /// - GrandTotal: SubTotal + Tax
         /// - TaxBreakdown: Detailed breakdown by tax type
-        /// 
         /// Example:
         /// Item: Burger, Price: 5000, Quantity: 2, Modifier: +500, Tax: 19.25%
         /// SubTotal: (5000 + 500) × 2 = 11,000
@@ -129,7 +127,6 @@ namespace PottaAPI.Controllers
         /// <remarks>
         /// Returns detailed tax breakdown grouped by tax type.
         /// Useful for displaying on receipts or checkout screens.
-        /// 
         /// Example response:
         /// [
         ///   {

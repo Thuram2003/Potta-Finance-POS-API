@@ -12,7 +12,6 @@ namespace PottaAPI.Models
         public int WaitingTransactionCount { get; set; }
         public DateTime LastSync { get; set; }
 
-        // Computed properties for additional insights
         public int TotalItems => ProductCount + BundleCount + VariationCount;
         public int TotalEntities => ProductCount + BundleCount + VariationCount + CategoryCount + TableCount + StaffCount + CustomerCount;
         public string SyncAge => GetSyncAge();
@@ -81,7 +80,6 @@ namespace PottaAPI.Models
         public SyncInfoDto SyncInfo { get; set; } = new();
     }
 
-    // Health DTOs
     public class DatabaseHealthDto
     {
         public bool Connected { get; set; }

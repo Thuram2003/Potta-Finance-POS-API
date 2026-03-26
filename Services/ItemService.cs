@@ -333,9 +333,19 @@ namespace PottaAPI.Services
             if (await reader.ReadAsync())
             {
                 var product = CreateProductFromDataReader(reader);
-                if (product != null && product.HasVariations)
+                if (product != null)
                 {
-                    product.Variations = await GetProductVariationsAsync(productId);
+                    // Load variations if product has them
+                    if (product.HasVariations)
+                    {
+                        product.Variations = await GetProductVariationsAsync(productId);
+                    }
+                    
+                    // Load modifiers for this product
+                    product.Modifiers = await GetProductModifiersAsync(productId);
+                    
+                    // Load multi-unit pricing for this product
+                    product.UnitPricing = await GetProductUnitPricingAsync(productId);
                 }
                 return product;
             }
@@ -802,8 +812,6 @@ namespace PottaAPI.Services
         /// <summary>
         /// Converts Windows file paths to API-accessible URLs
         /// </summary>
-        /// <param name="path">The file path from the database (e.g., "Images\\Products\\image.png")</param>
-        /// <returns>API URL path (e.g., "/images/Products/image.png")</returns>
         private string ConvertPathToUrl(string path)
         {
             if (string.IsNullOrEmpty(path))
@@ -1111,6 +1119,83 @@ namespace PottaAPI.Services
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// Get all modifiers associated with a specific product
+        /// </summary>
+        public async Task<List<ModifierDto>> GetProductModifiersAsync(string productId)
+        {
+            var modifiers = new List<ModifierDto>();
+
+            using var connection = new SqliteConnection(_connectionString);
+            await connection.OpenAsync();
+
+            // First, get the availableModifiers field from the product
+            var productCommand = connection.CreateCommand();
+            productCommand.CommandText = @"
+                SELECT availableModifiers 
+                FROM Products 
+                WHERE productId = @productId AND status = 1";
+            productCommand.Parameters.AddWithValue("@productId", productId);
+
+            var availableModifiersStr = (await productCommand.ExecuteScalarAsync())?.ToString();
+            
+            if (string.IsNullOrEmpty(availableModifiersStr))
+            {
+                return modifiers; // No modifiers for this product
+            }
+
+            // Parse the comma-separated modifier IDs
+            var modifierIds = availableModifiersStr.Split(',')
+                .Select(id => id.Trim())
+                .Where(id => !string.IsNullOrEmpty(id))
+                .ToList();
+
+            if (modifierIds.Count == 0)
+            {
+                return modifiers;
+            }
+
+            // Build parameterized IN clause for modifier IDs
+            var placeholders = string.Join(",", modifierIds.Select((_, i) => $"@modId{i}"));
+            
+            var command = connection.CreateCommand();
+            command.CommandText = $@"
+                SELECT m.modifierId, m.modifierName, m.priceChange, m.sortOrder, m.status, 
+                       m.createdDate, m.modifiedDate, m.recipeId, m.useRecipePrice,
+                       b.name as recipeName, b.cost as recipeCost
+                FROM Modifiers m
+                LEFT JOIN BundleItems b ON m.recipeId = b.bundleId
+                WHERE m.modifierId IN ({placeholders}) AND m.status = 1
+                ORDER BY m.sortOrder, m.modifierName";
+
+            // Add parameters for each modifier ID
+            for (int i = 0; i < modifierIds.Count; i++)
+            {
+                command.Parameters.AddWithValue($"@modId{i}", modifierIds[i]);
+            }
+
+            using var reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                modifiers.Add(new ModifierDto
+                {
+                    ModifierId = SafeGetString(reader, "modifierId"),
+                    ModifierName = SafeGetString(reader, "modifierName"),
+                    PriceChange = SafeGetDecimal(reader, "priceChange"),
+                    SortOrder = SafeGetInt32(reader, "sortOrder"),
+                    Status = SafeGetBoolean(reader, "status", true),
+                    CreatedDate = reader.GetDateTime("createdDate"),
+                    ModifiedDate = reader.GetDateTime("modifiedDate"),
+                    RecipeId = SafeGetString(reader, "recipeId"),
+                    UseRecipePrice = SafeGetBoolean(reader, "useRecipePrice"),
+                    RecipeName = SafeGetString(reader, "recipeName"),
+                    RecipeCost = SafeGetDecimal(reader, "recipeCost")
+                });
+            }
+
+            return modifiers;
         }
 
         #endregion

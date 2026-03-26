@@ -28,22 +28,18 @@ namespace PottaAPI.Controllers
         /// <summary>
         /// Add notes to an order/transaction
         /// </summary>
-        /// <param name="request">Add notes request</param>
-        /// <returns>Add notes response</returns>
         /// <response code="200">Note added successfully</response>
         /// <response code="400">Invalid request</response>
         /// <response code="404">Transaction not found</response>
         /// <response code="500">Internal server error</response>
         /// <remarks>
         /// Sample request:
-        /// 
         ///     POST /api/restaurant-operations/add-notes
         ///     {
         ///       "transactionId": "M20260219143022",
         ///       "noteText": "No onions, extra sauce",
         ///       "addedByStaffId": 1
         ///     }
-        /// 
         /// Notes are appended to existing notes with line breaks.
         /// </remarks>
         [HttpPost("add-notes")]
@@ -95,22 +91,18 @@ namespace PottaAPI.Controllers
         /// <summary>
         /// Transfer an order to a different server/staff
         /// </summary>
-        /// <param name="request">Transfer server request</param>
-        /// <returns>Transfer server response</returns>
         /// <response code="200">Server transferred successfully</response>
         /// <response code="400">Invalid request</response>
         /// <response code="404">Transaction or staff not found</response>
         /// <response code="500">Internal server error</response>
         /// <remarks>
         /// Sample request:
-        /// 
         ///     POST /api/restaurant-operations/transfer-server
         ///     {
         ///       "transactionId": "M20260219143022",
         ///       "newStaffId": 5,
         ///       "reason": "Shift change"
         ///     }
-        /// 
         /// This updates both the transaction StaffId and all cart items' StaffId.
         /// Useful for shift changes or server rotation.
         /// </remarks>
@@ -174,22 +166,18 @@ namespace PottaAPI.Controllers
         /// <summary>
         /// Transfer all orders from one staff to another (shift handover)
         /// </summary>
-        /// <param name="request">Shift handover request</param>
-        /// <returns>Shift handover response</returns>
         /// <response code="200">Shift handover completed successfully</response>
         /// <response code="400">Invalid request</response>
         /// <response code="404">Staff not found</response>
         /// <response code="500">Internal server error</response>
         /// <remarks>
         /// Sample request:
-        /// 
         ///     POST /api/restaurant-operations/shift-handover
         ///     {
         ///       "currentStaffId": 3,
         ///       "newStaffId": 5,
         ///       "reason": "End of shift"
         ///     }
-        /// 
         /// This transfers ALL pending orders from the current staff to the new staff.
         /// Useful for shift changes where all orders need to be handed over.
         /// After calling this endpoint, the desktop app should log out the current staff.
@@ -254,22 +242,18 @@ namespace PottaAPI.Controllers
         /// <summary>
         /// Move an order from one table to another
         /// </summary>
-        /// <param name="request">Move order request</param>
-        /// <returns>Move order response</returns>
         /// <response code="200">Order moved successfully</response>
         /// <response code="400">Invalid request</response>
         /// <response code="404">Transaction or table not found</response>
         /// <response code="500">Internal server error</response>
         /// <remarks>
         /// Sample request:
-        /// 
         ///     POST /api/restaurant-operations/move-order
         ///     {
         ///       "transactionId": "M20260219143022",
         ///       "targetTableId": "TBL005",
         ///       "reason": "Customer requested different table"
         ///     }
-        /// 
         /// This moves an order from its current table to a new table.
         /// Updates both the transaction and table statuses.
         /// Source table becomes available, target table becomes occupied.
@@ -334,8 +318,6 @@ namespace PottaAPI.Controllers
         /// <summary>
         /// Create a print bill request for desktop to process
         /// </summary>
-        /// <param name="request">Print bill request details</param>
-        /// <returns>Print bill request confirmation</returns>
         [HttpPost("print-bill")]
         [ProducesResponseType(typeof(PrintBillResponse), StatusCodes.Status201Created)]
         [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status400BadRequest)]
@@ -368,7 +350,6 @@ namespace PottaAPI.Controllers
         /// <summary>
         /// Get all pending print bill requests (for desktop polling)
         /// </summary>
-        /// <returns>List of pending print bill requests</returns>
         [HttpGet("print-bill/pending")]
         [ProducesResponseType(typeof(List<PrintBillRequestDTO>), StatusCodes.Status200OK)]
         public async Task<ActionResult<List<PrintBillRequestDTO>>> GetPendingPrintBillRequests()
@@ -391,9 +372,6 @@ namespace PottaAPI.Controllers
         /// <summary>
         /// Mark a print bill request as completed
         /// </summary>
-        /// <param name="requestId">Request ID to complete</param>
-        /// <param name="request">Completion details</param>
-        /// <returns>Success status</returns>
         [HttpPut("print-bill/{requestId}/complete")]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status404NotFound)]
@@ -429,8 +407,6 @@ namespace PottaAPI.Controllers
         /// <summary>
         /// Cancel a print bill request
         /// </summary>
-        /// <param name="requestId">Request ID to cancel</param>
-        /// <returns>Success status</returns>
         [HttpDelete("print-bill/{requestId}")]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status404NotFound)]
@@ -467,8 +443,6 @@ namespace PottaAPI.Controllers
         /// Create print bill requests for ALL open orders on a specific table at once.
         /// The desktop will receive all requests via polling and show a single combined dialog.
         /// </summary>
-        /// <param name="request">Table ID, staff ID, and optional notes</param>
-        /// <returns>Number of requests created and list of request IDs</returns>
         [HttpPost("print-bill-by-table")]
         [ProducesResponseType(typeof(PrintBillByTableResponse), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status400BadRequest)]
@@ -503,8 +477,6 @@ namespace PottaAPI.Controllers
         /// <summary>
         /// Create a pay entire bill request (mobile staff requests desktop to complete payment)
         /// </summary>
-        /// <param name="request">Pay entire bill request</param>
-        /// <returns>Pay entire bill response with request ID</returns>
         [HttpPost("pay-entire-bill")]
         [ProducesResponseType(typeof(PayEntireBillResponse), StatusCodes.Status201Created)]
         [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status400BadRequest)]
@@ -532,7 +504,6 @@ namespace PottaAPI.Controllers
         /// <summary>
         /// Get all pending pay entire bill requests (desktop polls this)
         /// </summary>
-        /// <returns>List of pending pay entire bill requests</returns>
         [HttpGet("pay-entire-bill/pending")]
         [ProducesResponseType(typeof(List<PayEntireBillRequestDTO>), StatusCodes.Status200OK)]
         public async Task<IActionResult> GetPendingPayEntireBillRequests()
@@ -544,9 +515,6 @@ namespace PottaAPI.Controllers
         /// <summary>
         /// Complete a pay entire bill request (desktop marks as completed after payment)
         /// </summary>
-        /// <param name="requestId">Request ID to complete</param>
-        /// <param name="request">Completion details</param>
-        /// <returns>Success status</returns>
         [HttpPut("pay-entire-bill/{requestId}/complete")]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status404NotFound)]
@@ -587,8 +555,6 @@ namespace PottaAPI.Controllers
         /// <summary>
         /// Cancel a pay entire bill request
         /// </summary>
-        /// <param name="requestId">Request ID to cancel</param>
-        /// <returns>Success status</returns>
         [HttpDelete("pay-entire-bill/{requestId}")]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status404NotFound)]
@@ -629,8 +595,6 @@ namespace PottaAPI.Controllers
         /// POST /api/restaurant-operations/refire-to-kitchen
         /// Mark an order as refired (updates WaitingTransaction)
         /// </summary>
-        /// <param name="request">Refire request with transaction ID, staff ID, item indices, and reason</param>
-        /// <returns>Refire response with confirmation</returns>
         [HttpPost("refire-to-kitchen")]
         [ProducesResponseType(typeof(RefireToKitchenResponse), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status400BadRequest)]
@@ -696,11 +660,8 @@ namespace PottaAPI.Controllers
         /// POST /api/restaurant-operations/combine-orders
         /// Combine multiple orders into one
         /// </summary>
-        /// <param name="request">Combine orders request with transaction IDs, target table, and target staff</param>
-        /// <returns>Combine orders response with new transaction ID</returns>
         /// <remarks>
         /// Sample request:
-        /// 
         ///     POST /api/restaurant-operations/combine-orders
         ///     {
         ///       "transactionIds": ["M20260221001", "M20260221002", "M20260221003"],
@@ -708,7 +669,6 @@ namespace PottaAPI.Controllers
         ///       "targetStaffId": 5,
         ///       "notes": "Combined for birthday party"
         ///     }
-        /// 
         /// This endpoint:
         /// - Combines 2+ waiting transactions into one
         /// - Merges duplicate items (same product, modifiers, price)
@@ -717,7 +677,6 @@ namespace PottaAPI.Controllers
         /// - Assigns combined order to target table and staff
         /// - Deletes original transactions after successful combination
         /// - Operation is atomic (all or nothing)
-        /// 
         /// Orders can be combined from SAME table OR DIFFERENT tables.
         /// </remarks>
         [HttpPost("combine-orders")]
@@ -784,22 +743,18 @@ namespace PottaAPI.Controllers
         /// <summary>
         /// Remove taxes and fees from an order
         /// </summary>
-        /// <param name="request">Remove taxes and fees request</param>
-        /// <returns>Remove taxes and fees response</returns>
         /// <response code="200">Taxes and fees removed successfully</response>
         /// <response code="400">Invalid request</response>
         /// <response code="404">Transaction not found</response>
         /// <response code="500">Internal server error</response>
         /// <remarks>
         /// Sample request:
-        /// 
         ///     POST /api/restaurant-operations/remove-taxes-and-fees
         ///     {
         ///       "transactionId": "M20260221001",
         ///       "staffId": 5,
         ///       "reason": "Tax-exempt organization"
         ///     }
-        /// 
         /// This endpoint removes all taxes and fees from the order, setting the tax amount to 0.
         /// The operation is logged in the audit trail for compliance.
         /// </remarks>

@@ -24,8 +24,6 @@ namespace PottaAPI.Controllers
         /// Authenticate staff member using daily code
         /// POST /api/staff/login
         /// </summary>
-        /// <param name="request">Login request with daily code</param>
-        /// <returns>Login response with staff info and session token</returns>
         [HttpPost("login")]
         [ProducesResponseType(typeof(StaffLoginResponse), 200)]
         [ProducesResponseType(typeof(StaffLoginResponse), 400)]
@@ -54,8 +52,6 @@ namespace PottaAPI.Controllers
         /// Validate if a daily code is valid and not expired
         /// GET /api/staff/validate/{code}
         /// </summary>
-        /// <param name="code">4-digit daily code</param>
-        /// <returns>Validation response</returns>
         [HttpGet("validate/{code}")]
         [ProducesResponseType(typeof(CodeValidationResponse), 200)]
         public async Task<ActionResult<CodeValidationResponse>> ValidateCode(string code)
@@ -77,8 +73,6 @@ namespace PottaAPI.Controllers
         /// Get QR code data for a specific staff member
         /// GET /api/staff/qr-data/{staffId}
         /// </summary>
-        /// <param name="staffId">Staff ID</param>
-        /// <returns>QR code data with JSON string</returns>
         [HttpGet("qr-data/{staffId}")]
         [ProducesResponseType(typeof(StaffQRCodeResponse), 200)]
         [ProducesResponseType(404)]
@@ -101,8 +95,6 @@ namespace PottaAPI.Controllers
         /// Get staff information by daily code (without logging in)
         /// GET /api/staff/info/{code}
         /// </summary>
-        /// <param name="code">4-digit daily code</param>
-        /// <returns>Staff DTO or 404</returns>
         [HttpGet("info/{code}")]
         [ProducesResponseType(typeof(StaffDTO), 200)]
         [ProducesResponseType(404)]

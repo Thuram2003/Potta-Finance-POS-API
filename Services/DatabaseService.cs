@@ -102,9 +102,6 @@ namespace PottaAPI.Services
             }
         }
 
-        // NOTE: Staff operations moved to StaffService.cs
-        // NOTE: Table operations moved to TableService.cs
-
         public async Task<SyncInfoDto> GetLastSyncInfoAsync()
         {
             using var connection = new SqliteConnection(_connectionString);
@@ -176,11 +173,9 @@ namespace PottaAPI.Services
             using var connection = new SqliteConnection(_connectionString);
             await connection.OpenAsync();
 
-            // Get database file info
             var dbPath = connection.DataSource;
             var fileInfo = new FileInfo(dbPath);
 
-            // Get table count
             var command = connection.CreateCommand();
             command.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table'";
             var tableCount = Convert.ToInt32(await command.ExecuteScalarAsync() ?? 0);

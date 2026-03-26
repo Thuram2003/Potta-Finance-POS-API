@@ -12,7 +12,6 @@ namespace PottaAPI.Controllers
     /// Controller for mobile devices to view restaurant floor plans.
     /// Provides read-only access to floor plans and their positioned elements.
     /// Floor plan creation/editing/deletion is handled by desktop UI only.
-    /// 
     /// Mobile workflow:
     /// 1. GET /api/floorplans - List all floor plans
     /// 2. GET /api/floorplans/{id} - Get floor plan with positioned elements
@@ -34,7 +33,6 @@ namespace PottaAPI.Controllers
         /// Get all active floor plans (list view)
         /// Mobile use case: Display floor plan selector/switcher
         /// </summary>
-        /// <returns>List of floor plans with basic metadata</returns>
         /// <response code="200">Returns list of floor plans</response>
         /// <response code="500">Internal server error</response>
         [HttpGet]
@@ -56,12 +54,10 @@ namespace PottaAPI.Controllers
         /// <summary>
         /// Get specific floor plan with all positioned elements
         /// Mobile use case: Display floor plan with tables and elements for rendering
-        /// 
         /// Returns:
         /// - Floor plan metadata (name, number, canvas dimensions, grid spacing)
         /// - All positioned elements with coordinates and dimensions
         /// - Table information for table elements (use /api/tables/{id} for full details)
-        /// 
         /// Mobile developer should:
         /// - Use canvasWidth/canvasHeight for canvas size
         /// - Use gridSpacing (50px) for grid alignment
@@ -71,8 +67,6 @@ namespace PottaAPI.Controllers
         /// - For table elements, call /api/tables/{tableId} for full table details
         /// - For table elements, call /api/tables/{tableId}/seats for seat layout
         /// </summary>
-        /// <param name="id">Floor plan ID</param>
-        /// <returns>Floor plan with positioned elements</returns>
         /// <response code="200">Returns floor plan details</response>
         /// <response code="404">Floor plan not found</response>
         /// <response code="500">Internal server error</response>

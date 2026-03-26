@@ -19,7 +19,6 @@ namespace PottaAPI.Models
         public DateTime CreatedDate { get; set; }
         public DateTime ModifiedDate { get; set; }
 
-        // Computed property for display
         public string DisplayName => $"{FloorName} (Floor {FloorNumber})";
     }
 
@@ -44,7 +43,6 @@ namespace PottaAPI.Models
         public DateTime ModifiedDate { get; set; }
         public List<FloorPlanElementDto> Elements { get; set; } = new List<FloorPlanElementDto>();
 
-        // Computed property for display
         public string DisplayName => $"{FloorName} (Floor {FloorNumber})";
     }
 
@@ -71,10 +69,8 @@ namespace PottaAPI.Models
         public DateTime CreatedDate { get; set; }
         public DateTime ModifiedDate { get; set; }
 
-        // Table information (if element is a table)
         public FloorPlanTableInfoDto? TableInfo { get; set; }
 
-        // Computed properties
         public bool IsTable => !string.IsNullOrEmpty(TableId);
         public bool IsClickable => IsTable && !IsLocked;
     }
@@ -94,7 +90,6 @@ namespace PottaAPI.Models
         public string? Size { get; set; }
         public string? Shape { get; set; }
 
-        // Computed properties
         public string DisplayName => !string.IsNullOrEmpty(TableName) ? TableName : $"Table {TableNumber}";
         public bool IsAvailable => Status == "Available";
         public bool IsOccupied => Status == "Occupied";

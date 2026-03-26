@@ -24,7 +24,6 @@ namespace PottaAPI.Controllers
         /// <summary>
         /// Get all active items (products, bundles, recipes)
         /// </summary>
-        /// <returns>List of active items</returns>
         [HttpGet]
         [ResponseCache(Duration = 60, Location = ResponseCacheLocation.Any, VaryByQueryKeys = new string[] { })]
         public async Task<ActionResult<ApiResponseDto<List<ItemDto>>>> GetAllItems()
@@ -51,12 +50,11 @@ namespace PottaAPI.Controllers
 
         /// <summary>
         /// Get item by ID (works for products, bundles, recipes)
+        /// Returns the full derived type (ProductDto or BundleDto) with all properties
         /// </summary>
-        /// <param name="id">Item ID</param>
-        /// <returns>Item details if found</returns>
         [HttpGet("{id}")]
         [ResponseCache(Duration = 60, Location = ResponseCacheLocation.Any, VaryByQueryKeys = new string[] { "id" })]
-        public async Task<ActionResult<ApiResponseDto<ItemDto>>> GetItemById(string id)
+        public async Task<ActionResult<ApiResponseDto<object>>> GetItemById(string id)
         {
             try
             {
@@ -71,7 +69,8 @@ namespace PottaAPI.Controllers
                     });
                 }
 
-                return Ok(new ApiResponseDto<ItemDto>
+                // Return the actual derived type (ProductDto or BundleDto) to preserve all properties
+                return Ok(new ApiResponseDto<object>
                 {
                     Success = true,
                     Message = "Item retrieved successfully",
@@ -90,7 +89,6 @@ namespace PottaAPI.Controllers
 
         /// <summary>
         /// Search items (matches Desktop Dashboard search behavior exactly)
-        /// 
         /// Search Behavior:
         /// - Searches: name, SKU, description, categories
         /// - Returns: Active items only (status = 1)
@@ -98,13 +96,8 @@ namespace PottaAPI.Controllers
         /// - Excludes: Product variations (returns parent products only)
         /// - Includes: Products, Bundles, and Recipes
         /// - Sorting: Alphabetically by name
-        /// 
         /// If no searchTerm provided, returns all active items (excluding ingredients)
         /// </summary>
-        /// <param name="searchTerm">Search term to match against name, SKU, description, categories (optional)</param>
-        /// <param name="page">Page number (default: 1)</param>
-        /// <param name="pageSize">Page size (default: 50, max: 100)</param>
-        /// <returns>Paginated search results</returns>
         [HttpGet("search")]
         public async Task<ActionResult<ApiResponseDto<ItemSearchResponseDto>>> SearchItems(
             [FromQuery] string? searchTerm = null,
@@ -151,7 +144,6 @@ namespace PottaAPI.Controllers
         /// <summary>
         /// Get item statistics
         /// </summary>
-        /// <returns>Item statistics and insights</returns>
         [HttpGet("statistics")]
         public async Task<ActionResult<ApiResponseDto<ItemStatisticsDto>>> GetItemStatistics()
         {
@@ -182,7 +174,6 @@ namespace PottaAPI.Controllers
         /// <summary>
         /// Get all active products
         /// </summary>
-        /// <returns>List of active products</returns>
         [HttpGet("products")]
         public async Task<ActionResult<ApiResponseDto<List<ProductDto>>>> GetAllProducts()
         {
@@ -209,8 +200,6 @@ namespace PottaAPI.Controllers
         /// <summary>
         /// Get product by ID with variations
         /// </summary>
-        /// <param name="id">Product ID</param>
-        /// <returns>Product details with variations if found</returns>
         [HttpGet("products/{id}")]
         public async Task<ActionResult<ApiResponseDto<ProductDto>>> GetProductById(string id)
         {
@@ -247,8 +236,6 @@ namespace PottaAPI.Controllers
         /// <summary>
         /// Get products by category
         /// </summary>
-        /// <param name="categoryId">Category ID</param>
-        /// <returns>List of products in category</returns>
         [HttpGet("products/category/{categoryId}")]
         public async Task<ActionResult<ApiResponseDto<List<ProductDto>>>> GetProductsByCategory(string categoryId)
         {
@@ -275,7 +262,6 @@ namespace PottaAPI.Controllers
         /// <summary>
         /// Get low stock products
         /// </summary>
-        /// <returns>List of products with low stock</returns>
         [HttpGet("products/low-stock")]
         public async Task<ActionResult<ApiResponseDto<List<ProductDto>>>> GetLowStockProducts()
         {
@@ -305,19 +291,15 @@ namespace PottaAPI.Controllers
 
         /// <summary>
         /// Get variations for a product with full attribute and value data
-        /// 
         /// Returns structured data for building ComboBox UI:
         /// - List of attributes (e.g., Color, Size)
         /// - List of values for each attribute (e.g., Red/Blue/Green for Color)
         /// - List of variations with their attribute-value mappings
-        /// 
         /// This allows the client to:
         /// 1. Build ComboBoxes for each attribute
         /// 2. Populate ComboBoxes with available values
         /// 3. Match user selections to specific variations
         /// </summary>
-        /// <param name="productId">Parent product ID</param>
-        /// <returns>Product variations with attributes and values</returns>
         [HttpGet("products/{productId}/variations")]
         public async Task<ActionResult<ApiResponseDto<ProductVariationsWithAttributesDto>>> GetProductVariations(string productId)
         {
@@ -345,8 +327,6 @@ namespace PottaAPI.Controllers
         /// <summary>
         /// Get variation by ID
         /// </summary>
-        /// <param name="id">Variation ID</param>
-        /// <returns>Variation details if found</returns>
         [HttpGet("variations/{id}")]
         public async Task<ActionResult<ApiResponseDto<ProductVariationDto>>> GetVariationById(string id)
         {
@@ -387,7 +367,6 @@ namespace PottaAPI.Controllers
         /// <summary>
         /// Get all active bundles
         /// </summary>
-        /// <returns>List of active bundles</returns>
         [HttpGet("bundles")]
         public async Task<ActionResult<ApiResponseDto<List<BundleDto>>>> GetAllBundles()
         {
@@ -414,8 +393,6 @@ namespace PottaAPI.Controllers
         /// <summary>
         /// Get bundle by ID with components
         /// </summary>
-        /// <param name="id">Bundle ID</param>
-        /// <returns>Bundle details with components if found</returns>
         [HttpGet("bundles/{id}")]
         public async Task<ActionResult<ApiResponseDto<BundleDto>>> GetBundleById(string id)
         {
@@ -452,7 +429,6 @@ namespace PottaAPI.Controllers
         /// <summary>
         /// Get all recipes
         /// </summary>
-        /// <returns>List of recipes</returns>
         [HttpGet("recipes")]
         public async Task<ActionResult<ApiResponseDto<List<BundleDto>>>> GetAllRecipes()
         {
@@ -483,7 +459,6 @@ namespace PottaAPI.Controllers
         /// <summary>
         /// Get all categories with item counts
         /// </summary>
-        /// <returns>List of categories</returns>
         [HttpGet("categories")]
         public async Task<ActionResult<ApiResponseDto<List<CategoryDto>>>> GetAllCategories()
         {
@@ -510,8 +485,6 @@ namespace PottaAPI.Controllers
         /// <summary>
         /// Get category by ID
         /// </summary>
-        /// <param name="id">Category ID</param>
-        /// <returns>Category details if found</returns>
         [HttpGet("categories/{id}")]
         public async Task<ActionResult<ApiResponseDto<CategoryDto>>> GetCategoryById(string id)
         {
@@ -552,7 +525,6 @@ namespace PottaAPI.Controllers
         /// <summary>
         /// Get all active modifiers
         /// </summary>
-        /// <returns>List of active modifiers</returns>
         [HttpGet("modifiers")]
         public async Task<ActionResult<ApiResponseDto<List<ModifierDto>>>> GetAllModifiers()
         {
@@ -579,8 +551,6 @@ namespace PottaAPI.Controllers
         /// <summary>
         /// Get modifier by ID
         /// </summary>
-        /// <param name="id">Modifier ID</param>
-        /// <returns>Modifier details if found</returns>
         [HttpGet("modifiers/{id}")]
         public async Task<ActionResult<ApiResponseDto<ModifierDto>>> GetModifierById(string id)
         {
@@ -620,10 +590,8 @@ namespace PottaAPI.Controllers
 
         /// <summary>
         /// Get unit pricing options for a product
-        /// 
         /// Returns different package sizes/units for selling the same product.
         /// Example: Sell Coca-Cola by bottle (330ml) or by crate (24 bottles)
-        /// 
         /// Each option includes:
         /// - Package name (e.g., "Bottle", "Crate")
         /// - Units per package (e.g., 1 bottle, 24 bottles)
@@ -631,8 +599,6 @@ namespace PottaAPI.Controllers
         /// - Price per unit in package (calculated)
         /// - Discount percentage compared to base unit price
         /// </summary>
-        /// <param name="productId">Product ID</param>
-        /// <returns>List of unit pricing options</returns>
         [HttpGet("products/{productId}/unit-pricing")]
         public async Task<ActionResult<ApiResponseDto<List<ProductUnitPricingDto>>>> GetProductUnitPricing(string productId)
         {
@@ -658,12 +624,9 @@ namespace PottaAPI.Controllers
 
         /// <summary>
         /// Get unit pricing options for a product variation
-        /// 
         /// Same as product unit pricing but for specific variations.
         /// Example: Coca-Cola (Regular) might have different pricing than Coca-Cola (Diet)
         /// </summary>
-        /// <param name="variationId">Variation ID</param>
-        /// <returns>List of unit pricing options</returns>
         [HttpGet("variations/{variationId}/unit-pricing")]
         public async Task<ActionResult<ApiResponseDto<List<ProductUnitPricingDto>>>> GetVariationUnitPricing(string variationId)
         {
