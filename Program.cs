@@ -140,7 +140,11 @@ try
 
     builder.Services.AddSingleton<IConnectionStringProvider, ConnectionStringProvider>();
 
-    builder.Services.AddSingleton<IDatabaseService, DatabaseService>();
+    builder.Services.AddSingleton<IDatabaseService>(provider =>
+    {
+        var connectionStringProvider = provider.GetRequiredService<IConnectionStringProvider>();
+        return new DatabaseService(connectionStringProvider);
+    });
 
     builder.Services.AddSingleton<ICustomerService>(provider =>
 {

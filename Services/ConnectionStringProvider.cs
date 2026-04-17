@@ -69,6 +69,8 @@ namespace PottaAPI.Services
                 
                 // Check common installation paths
                 var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+                // Long-run data location (desktop-owned DB):
+                possiblePaths.Add(Path.Combine(localAppData, "Instanvi", "Potta Finance POS", "pottadb.db"));
                 possiblePaths.Add(Path.Combine(localAppData, "Programs", "Potta Finance POS", "pottadb.db"));
                 possiblePaths.Add(Path.Combine(localAppData, "Potta Finance POS", "pottadb.db"));
                 
