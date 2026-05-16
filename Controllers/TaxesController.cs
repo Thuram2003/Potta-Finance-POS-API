@@ -5,7 +5,8 @@ using PottaAPI.Services;
 namespace PottaAPI.Controllers
 {
     /// <summary>
-    /// Tax calculation and management endpoints
+    /// Tax configuration and calculation. Use <c>/calculate</c> to get order totals with tax applied,
+    /// and <c>/breakdown</c> to get a per-tax-type breakdown suitable for receipts.
     /// </summary>
     [ApiController]
     [Route("api/[controller]")]
@@ -21,11 +22,13 @@ namespace PottaAPI.Controllers
             _logger = logger;
         }
 
-        /// <summary>
-        /// Get all active taxes
-        /// </summary>
+        /// <summary>Get all active tax configurations.</summary>
+        /// <remarks>Returns taxes that are currently enabled. Each tax has a name, type (Percentage or Flat Rate), and rate value.</remarks>
+        /// <response code="200">List of active taxes</response>
+        /// <response code="500">Database error</response>
         [HttpGet]
         [ProducesResponseType(typeof(List<TaxDTO>), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status500InternalServerError)]
         public async Task<ActionResult<List<TaxDTO>>> GetActiveTaxes()
         {
             try
@@ -41,12 +44,15 @@ namespace PottaAPI.Controllers
             }
         }
 
-        /// <summary>
-        /// Get tax by ID
-        /// </summary>
+        /// <summary>Get a single tax configuration by its ID.</summary>
+        /// <param name="taxId">The tax's unique identifier</param>
+        /// <response code="200">Tax configuration</response>
+        /// <response code="404">Tax not found</response>
+        /// <response code="500">Database error</response>
         [HttpGet("{taxId}")]
         [ProducesResponseType(typeof(TaxDTO), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
+        [ProducesResponseType(StatusCodes.Status500InternalServerError)]
         public async Task<ActionResult<TaxDTO>> GetTaxById(string taxId)
         {
             try

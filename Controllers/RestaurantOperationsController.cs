@@ -6,8 +6,9 @@ using PottaAPI.Services;
 namespace PottaAPI.Controllers
 {
     /// <summary>
-    /// Restaurant operations endpoints
-    /// Handles operations like adding notes, transferring servers, moving orders, etc.
+    /// Restaurant floor operations: notes, server transfers, shift handovers, table moves,
+    /// print-bill requests, pay-entire-bill requests, kitchen refire, and order combining.
+    /// Most endpoints are triggered by mobile staff and polled/completed by the desktop app.
     /// </summary>
     [ApiController]
     [Route("api/restaurant-operations")]
@@ -315,9 +316,19 @@ namespace PottaAPI.Controllers
             }
         }
 
-        /// <summary>
-        /// Create a print bill request for desktop to process
-        /// </summary>
+        /// <summary>Create a print-bill request so the desktop app prints the bill for a transaction.</summary>
+        /// <remarks>
+        /// Mobile staff tap "Print Bill" → this creates a pending request → desktop polls
+        /// <c>GET /api/restaurant-operations/print-bill/pending</c> and prints automatically.
+        ///
+        /// Sample request:
+        ///
+        ///     POST /api/restaurant-operations/print-bill
+        ///     { "transactionId": "M20260219143022", "requestedByStaffId": 3 }
+        /// </remarks>
+        /// <response code="201">Request created — desktop will process it shortly</response>
+        /// <response code="400">Invalid request or transaction already has a pending print request</response>
+        /// <response code="404">Transaction not found</response>
         [HttpPost("print-bill")]
         [ProducesResponseType(typeof(PrintBillResponse), StatusCodes.Status201Created)]
         [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status400BadRequest)]
@@ -347,9 +358,9 @@ namespace PottaAPI.Controllers
             }
         }
 
-        /// <summary>
-        /// Get all pending print bill requests (for desktop polling)
-        /// </summary>
+        /// <summary>Get all pending print-bill requests (desktop polls this to know what to print).</summary>
+        /// <remarks>Desktop app should poll this every few seconds and print each pending request, then call the complete endpoint.</remarks>
+        /// <response code="200">List of pending print requests</response>
         [HttpGet("print-bill/pending")]
         [ProducesResponseType(typeof(List<PrintBillRequestDTO>), StatusCodes.Status200OK)]
         public async Task<ActionResult<List<PrintBillRequestDTO>>> GetPendingPrintBillRequests()
@@ -369,9 +380,10 @@ namespace PottaAPI.Controllers
             }
         }
 
-        /// <summary>
-        /// Mark a print bill request as completed
-        /// </summary>
+        /// <summary>Mark a print-bill request as completed after the desktop has printed it.</summary>
+        /// <param name="requestId">The print request ID returned when the request was created</param>
+        /// <response code="200">Request marked as completed</response>
+        /// <response code="404">Request not found or already completed</response>
         [HttpPut("print-bill/{requestId}/complete")]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status404NotFound)]
@@ -404,9 +416,10 @@ namespace PottaAPI.Controllers
             }
         }
 
-        /// <summary>
-        /// Cancel a print bill request
-        /// </summary>
+        /// <summary>Cancel a pending print-bill request (e.g. customer changed their mind).</summary>
+        /// <param name="requestId">The print request ID to cancel</param>
+        /// <response code="200">Request cancelled</response>
+        /// <response code="404">Request not found or already processed</response>
         [HttpDelete("print-bill/{requestId}")]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status404NotFound)]
@@ -439,10 +452,19 @@ namespace PottaAPI.Controllers
             }
         }
 
-        /// <summary>
-        /// Create print bill requests for ALL open orders on a specific table at once.
-        /// The desktop will receive all requests via polling and show a single combined dialog.
-        /// </summary>
+        /// <summary>Create print-bill requests for every open order on a table at once.</summary>
+        /// <remarks>
+        /// Useful when a table has multiple open orders (e.g. split orders per seat).
+        /// The desktop receives all requests via polling and shows a single combined print dialog.
+        ///
+        /// Sample request:
+        ///
+        ///     POST /api/restaurant-operations/print-bill-by-table
+        ///     { "tableId": "TBL-001", "requestedByStaffId": 3 }
+        /// </remarks>
+        /// <response code="200">Requests created for all open orders on the table</response>
+        /// <response code="400">Invalid request</response>
+        /// <response code="404">Table not found or no open orders</response>
         [HttpPost("print-bill-by-table")]
         [ProducesResponseType(typeof(PrintBillByTableResponse), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status400BadRequest)]
@@ -474,9 +496,18 @@ namespace PottaAPI.Controllers
 
         #region Pay Entire Bill Endpoints
 
-        /// <summary>
-        /// Create a pay entire bill request (mobile staff requests desktop to complete payment)
-        /// </summary>
+        /// <summary>Mobile staff requests the desktop to collect full payment for a transaction.</summary>
+        /// <remarks>
+        /// Mobile staff tap "Pay Entire Bill" → request is created → desktop polls
+        /// <c>GET /api/restaurant-operations/pay-entire-bill/pending</c>, opens the payment dialog, and completes it.
+        ///
+        /// Sample request:
+        ///
+        ///     POST /api/restaurant-operations/pay-entire-bill
+        ///     { "transactionId": "M20260219143022", "requestedByStaffId": 3, "paymentMethod": "Cash" }
+        /// </remarks>
+        /// <response code="201">Pay-entire-bill request created</response>
+        /// <response code="400">Invalid request</response>
         [HttpPost("pay-entire-bill")]
         [ProducesResponseType(typeof(PayEntireBillResponse), StatusCodes.Status201Created)]
         [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status400BadRequest)]
@@ -501,9 +532,8 @@ namespace PottaAPI.Controllers
             }
         }
 
-        /// <summary>
-        /// Get all pending pay entire bill requests (desktop polls this)
-        /// </summary>
+        /// <summary>Get all pending pay-entire-bill requests (desktop polls this).</summary>
+        /// <response code="200">List of pending pay-entire-bill requests</response>
         [HttpGet("pay-entire-bill/pending")]
         [ProducesResponseType(typeof(List<PayEntireBillRequestDTO>), StatusCodes.Status200OK)]
         public async Task<IActionResult> GetPendingPayEntireBillRequests()
@@ -512,9 +542,10 @@ namespace PottaAPI.Controllers
             return Ok(requests);
         }
 
-        /// <summary>
-        /// Complete a pay entire bill request (desktop marks as completed after payment)
-        /// </summary>
+        /// <summary>Mark a pay-entire-bill request as completed after the desktop has processed payment.</summary>
+        /// <param name="requestId">The request ID to complete</param>
+        /// <response code="200">Request marked as completed</response>
+        /// <response code="404">Request not found or already processed</response>
         [HttpPut("pay-entire-bill/{requestId}/complete")]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status404NotFound)]
@@ -552,9 +583,10 @@ namespace PottaAPI.Controllers
             }
         }
 
-        /// <summary>
-        /// Cancel a pay entire bill request
-        /// </summary>
+        /// <summary>Cancel a pending pay-entire-bill request.</summary>
+        /// <param name="requestId">The request ID to cancel</param>
+        /// <response code="200">Request cancelled</response>
+        /// <response code="404">Request not found or already processed</response>
         [HttpDelete("pay-entire-bill/{requestId}")]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status404NotFound)]
@@ -591,10 +623,20 @@ namespace PottaAPI.Controllers
 
         #region Refire To Kitchen Operations
 
-        /// <summary>
-        /// POST /api/restaurant-operations/refire-to-kitchen
-        /// Mark an order as refired (updates WaitingTransaction)
-        /// </summary>
+        /// <summary>Mark an order as refired to the kitchen (re-sends it for preparation).</summary>
+        /// <remarks>
+        /// Updates the <c>WaitingTransaction</c> status to indicate the order was refired.
+        /// Use this when a kitchen display needs to re-show an order that was accidentally dismissed.
+        ///
+        /// Sample request:
+        ///
+        ///     POST /api/restaurant-operations/refire-to-kitchen
+        ///     { "transactionId": "M20260219143022", "staffId": 3 }
+        /// </remarks>
+        /// <response code="200">Order marked as refired</response>
+        /// <response code="400">Invalid request</response>
+        /// <response code="404">Transaction not found</response>
+        /// <response code="500">Database error</response>
         [HttpPost("refire-to-kitchen")]
         [ProducesResponseType(typeof(RefireToKitchenResponse), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status400BadRequest)]
@@ -656,10 +698,7 @@ namespace PottaAPI.Controllers
 
         #region Combine Orders Operations
 
-        /// <summary>
-        /// POST /api/restaurant-operations/combine-orders
-        /// Combine multiple orders into one
-        /// </summary>
+        /// <summary>Combine two or more waiting transactions into a single order.</summary>
         /// <remarks>
         /// Sample request:
         ///     POST /api/restaurant-operations/combine-orders

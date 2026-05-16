@@ -25,7 +25,7 @@ namespace PottaAPI.Services
                     Console.WriteLine($"✅ Taxes calculated for {transaction.Items.Count} items");
                 }
 
-                var transactionId = "M" + DateTime.Now.ToString("yyyyMMddHHmmss");
+                var transactionId = "M" + DateTime.Now.ToString("yyyyMMddHHmmss") + new Random().Next(1000, 9999);
 
                 var sql = @"
                     INSERT INTO WaitingTransactions (

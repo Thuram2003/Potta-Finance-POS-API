@@ -6,7 +6,8 @@ using PottaAPI.Services;
 namespace PottaAPI.Controllers
 {
     /// <summary>
-    /// Controller for customer-related operations
+    /// Manage and look up customers. All operations are read-only — customer creation and editing
+    /// are handled by the desktop app. Use these endpoints to populate customer pickers on mobile.
     /// </summary>
     [ApiController]
     [Route("api/[controller]")]
@@ -19,11 +20,14 @@ namespace PottaAPI.Controllers
             _customerService = customerService;
         }
 
-        /// <summary>
-        /// Get all active customers
-        /// </summary>
+        /// <summary>Get all active customers.</summary>
+        /// <remarks>Returns every customer with status = active. Results are cached for 30 seconds.</remarks>
+        /// <response code="200">List of customers</response>
+        /// <response code="500">Database error</response>
         [HttpGet]
         [ResponseCache(Duration = 30, Location = ResponseCacheLocation.Any, VaryByQueryKeys = new string[] { })]
+        [ProducesResponseType(typeof(ApiResponseDto<List<CustomerDto>>), 200)]
+        [ProducesResponseType(500)]
         public async Task<ActionResult<ApiResponseDto<List<CustomerDto>>>> GetAllCustomers()
         {
             try
@@ -46,11 +50,16 @@ namespace PottaAPI.Controllers
             }
         }
 
-        /// <summary>
-        /// Get customer by ID
-        /// </summary>
+        /// <summary>Get a single customer by their unique ID.</summary>
+        /// <param name="id">The customer's unique identifier (e.g. <c>CUST-001</c>)</param>
+        /// <response code="200">Customer found</response>
+        /// <response code="404">No customer with that ID</response>
+        /// <response code="500">Database error</response>
         [HttpGet("{id}")]
         [ResponseCache(Duration = 30, Location = ResponseCacheLocation.Any, VaryByQueryKeys = new string[] { "id" })]
+        [ProducesResponseType(typeof(ApiResponseDto<CustomerDto>), 200)]
+        [ProducesResponseType(typeof(ErrorResponseDto), 404)]
+        [ProducesResponseType(500)]
         public async Task<ActionResult<ApiResponseDto<CustomerDto>>> GetCustomerById(string id)
         {
             try
@@ -83,10 +92,16 @@ namespace PottaAPI.Controllers
             }
         }
 
-        /// <summary>
-        /// Search customers by name, email, or phone
-        /// </summary>
+        /// <summary>Search customers by name, email, or phone number.</summary>
+        /// <param name="searchTerm">Partial match against name, email, or phone. Leave empty to return all.</param>
+        /// <param name="page">Page number (1-based, default 1)</param>
+        /// <param name="pageSize">Results per page (1–100, default 50)</param>
+        /// <param name="includeInactive">Set to <c>true</c> to include inactive customers (default false)</param>
+        /// <response code="200">Paginated search results</response>
+        /// <response code="500">Database error</response>
         [HttpGet("search")]
+        [ProducesResponseType(typeof(ApiResponseDto<CustomerSearchResponseDto>), 200)]
+        [ProducesResponseType(500)]
         public async Task<ActionResult<ApiResponseDto<CustomerSearchResponseDto>>> SearchCustomers(
             [FromQuery] string? searchTerm = null,
             [FromQuery] int page = 1,
@@ -127,10 +142,13 @@ namespace PottaAPI.Controllers
             }
         }
 
-        /// <summary>
-        /// Get customer statistics
-        /// </summary>
+        /// <summary>Get aggregate statistics about the customer base.</summary>
+        /// <remarks>Returns totals such as active count, inactive count, and new customers this month.</remarks>
+        /// <response code="200">Statistics object</response>
+        /// <response code="500">Database error</response>
         [HttpGet("statistics")]
+        [ProducesResponseType(typeof(ApiResponseDto<CustomerStatisticsDto>), 200)]
+        [ProducesResponseType(500)]
         public async Task<ActionResult<ApiResponseDto<CustomerStatisticsDto>>> GetCustomerStatistics()
         {
             try

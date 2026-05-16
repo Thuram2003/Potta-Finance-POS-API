@@ -1,8 +1,5 @@
 namespace PottaAPI.Services
 {
-    /// <summary>
-    /// Provides database connection string using the same logic as DatabaseService
-    /// </summary>
     public class ConnectionStringProvider : IConnectionStringProvider
     {
         private readonly string _connectionString;

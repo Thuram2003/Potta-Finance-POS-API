@@ -9,13 +9,9 @@ using System.Threading.Tasks;
 namespace PottaAPI.Controllers
 {
     /// <summary>
-    /// Controller for mobile devices to view restaurant floor plans.
-    /// Provides read-only access to floor plans and their positioned elements.
-    /// Floor plan creation/editing/deletion is handled by desktop UI only.
-    /// Mobile workflow:
-    /// 1. GET /api/floorplans - List all floor plans
-    /// 2. GET /api/floorplans/{id} - Get floor plan with positioned elements
-    /// 3. Use existing /api/tables endpoints for table details and status updates
+    /// Read-only access to restaurant floor plans for mobile rendering.
+    /// Floor plan creation, editing, and deletion are desktop-only.
+    /// Typical mobile flow: list floor plans → pick one → render its elements → use /api/tables for live status.
     /// </summary>
     [ApiController]
     [Route("api/[controller]")]
@@ -29,12 +25,10 @@ namespace PottaAPI.Controllers
             _floorPlanService = floorPlanService;
         }
 
-        /// <summary>
-        /// Get all active floor plans (list view)
-        /// Mobile use case: Display floor plan selector/switcher
-        /// </summary>
-        /// <response code="200">Returns list of floor plans</response>
-        /// <response code="500">Internal server error</response>
+        /// <summary>List all active floor plans (name and summary only).</summary>
+        /// <remarks>Use this to show a floor plan selector. Call <c>GET /api/floorplans/{id}</c> to get the full layout.</remarks>
+        /// <response code="200">List of floor plans</response>
+        /// <response code="500">Database error</response>
         [HttpGet]
         [ProducesResponseType(typeof(List<FloorPlanListDto>), 200)]
         [ProducesResponseType(500)]
@@ -51,25 +45,23 @@ namespace PottaAPI.Controllers
             }
         }
 
-        /// <summary>
-        /// Get specific floor plan with all positioned elements
-        /// Mobile use case: Display floor plan with tables and elements for rendering
-        /// Returns:
-        /// - Floor plan metadata (name, number, canvas dimensions, grid spacing)
-        /// - All positioned elements with coordinates and dimensions
-        /// - Table information for table elements (use /api/tables/{id} for full details)
-        /// Mobile developer should:
-        /// - Use canvasWidth/canvasHeight for canvas size
-        /// - Use gridSpacing (50px) for grid alignment
-        /// - Position elements using xPosition, yPosition, width, height
-        /// - Apply rotation if needed
-        /// - Render elements in zIndex order (lower first)
-        /// - For table elements, call /api/tables/{tableId} for full table details
-        /// - For table elements, call /api/tables/{tableId}/seats for seat layout
-        /// </summary>
-        /// <response code="200">Returns floor plan details</response>
+        /// <summary>Get a floor plan with all its positioned elements (tables, walls, decorations, etc.).</summary>
+        /// <remarks>
+        /// Returns the canvas dimensions and every element with its position, size, rotation, and z-index.
+        /// Use this to render the floor plan on mobile:
+        ///
+        /// - Set canvas to <c>canvasWidth × canvasHeight</c>
+        /// - Snap elements to <c>gridSpacing</c> (50 px)
+        /// - Position each element using <c>xPosition</c>, <c>yPosition</c>, <c>width</c>, <c>height</c>
+        /// - Apply <c>rotation</c> if non-zero
+        /// - Render in ascending <c>zIndex</c> order
+        /// - For table elements, call <c>GET /api/tables/{tableId}</c> for live status
+        /// - For seat layout, call <c>GET /api/tables/{tableId}/seats</c>
+        /// </remarks>
+        /// <param name="id">Floor plan unique identifier</param>
+        /// <response code="200">Floor plan with all positioned elements</response>
         /// <response code="404">Floor plan not found</response>
-        /// <response code="500">Internal server error</response>
+        /// <response code="500">Database error</response>
         [HttpGet("{id}")]
         [ProducesResponseType(typeof(FloorPlanDetailDto), 200)]
         [ProducesResponseType(404)]

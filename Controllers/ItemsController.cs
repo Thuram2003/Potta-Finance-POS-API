@@ -22,6 +22,24 @@ namespace PottaAPI.Controllers
         #region General Item Operations
 
         /// <summary>
+        /// Invalidate the server-side item cache. Call this after creating, updating, or deleting
+        /// any product, bundle, recipe, or category so the next fetch reflects the latest data.
+        /// </summary>
+        [HttpPost("cache/invalidate")]
+        public ActionResult InvalidateCache()
+        {
+            if (_itemService is ItemService svc)
+                svc.InvalidateCache();
+
+            return Ok(new ApiResponseDto<string>
+            {
+                Success = true,
+                Message = "Item cache invalidated",
+                Data = "ok"
+            });
+        }
+
+        /// <summary>
         /// Get all active items (products, bundles, recipes)
         /// </summary>
         [HttpGet]
@@ -87,17 +105,7 @@ namespace PottaAPI.Controllers
             }
         }
 
-        /// <summary>
-        /// Search items (matches Desktop Dashboard search behavior exactly)
-        /// Search Behavior:
-        /// - Searches: name, SKU, description, categories
-        /// - Returns: Active items only (status = 1)
-        /// - Excludes: Ingredients (isIngredient = 1)
-        /// - Excludes: Product variations (returns parent products only)
-        /// - Includes: Products, Bundles, and Recipes
-        /// - Sorting: Alphabetically by name
-        /// If no searchTerm provided, returns all active items (excluding ingredients)
-        /// </summary>
+        /// <summary>Search active products, bundles, and recipes by name, SKU, description, or category. Returns parent items only (no ingredients or variations).</summary>
         [HttpGet("search")]
         public async Task<ActionResult<ApiResponseDto<ItemSearchResponseDto>>> SearchItems(
             [FromQuery] string? searchTerm = null,
@@ -197,9 +205,7 @@ namespace PottaAPI.Controllers
             }
         }
 
-        /// <summary>
-        /// Get product by ID with variations
-        /// </summary>
+        /// <summary>Get a product by ID including its variations.</summary>
         [HttpGet("products/{id}")]
         public async Task<ActionResult<ApiResponseDto<ProductDto>>> GetProductById(string id)
         {
@@ -289,17 +295,7 @@ namespace PottaAPI.Controllers
 
         #region Product Variation Operations
 
-        /// <summary>
-        /// Get variations for a product with full attribute and value data
-        /// Returns structured data for building ComboBox UI:
-        /// - List of attributes (e.g., Color, Size)
-        /// - List of values for each attribute (e.g., Red/Blue/Green for Color)
-        /// - List of variations with their attribute-value mappings
-        /// This allows the client to:
-        /// 1. Build ComboBoxes for each attribute
-        /// 2. Populate ComboBoxes with available values
-        /// 3. Match user selections to specific variations
-        /// </summary>
+        /// <summary>Get all variations for a product with their attributes and selectable values (e.g. Color → Red/Blue, Size → S/M/L).</summary>
         [HttpGet("products/{productId}/variations")]
         public async Task<ActionResult<ApiResponseDto<ProductVariationsWithAttributesDto>>> GetProductVariations(string productId)
         {
@@ -588,17 +584,7 @@ namespace PottaAPI.Controllers
 
         #region Multi-Unit Pricing Operations
 
-        /// <summary>
-        /// Get unit pricing options for a product
-        /// Returns different package sizes/units for selling the same product.
-        /// Example: Sell Coca-Cola by bottle (330ml) or by crate (24 bottles)
-        /// Each option includes:
-        /// - Package name (e.g., "Bottle", "Crate")
-        /// - Units per package (e.g., 1 bottle, 24 bottles)
-        /// - Package price
-        /// - Price per unit in package (calculated)
-        /// - Discount percentage compared to base unit price
-        /// </summary>
+        /// <summary>Get available package/unit pricing options for a product (e.g. sell by bottle or by crate).</summary>
         [HttpGet("products/{productId}/unit-pricing")]
         public async Task<ActionResult<ApiResponseDto<List<ProductUnitPricingDto>>>> GetProductUnitPricing(string productId)
         {
@@ -622,11 +608,7 @@ namespace PottaAPI.Controllers
             }
         }
 
-        /// <summary>
-        /// Get unit pricing options for a product variation
-        /// Same as product unit pricing but for specific variations.
-        /// Example: Coca-Cola (Regular) might have different pricing than Coca-Cola (Diet)
-        /// </summary>
+        /// <summary>Get available package/unit pricing options for a specific variation.</summary>
         [HttpGet("variations/{variationId}/unit-pricing")]
         public async Task<ActionResult<ApiResponseDto<List<ProductUnitPricingDto>>>> GetVariationUnitPricing(string variationId)
         {

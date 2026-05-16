@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Cors;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Caching.Memory;
 using PottaAPI.Configuration;
 using PottaAPI.Middleware;
 using PottaAPI.Services;
@@ -55,6 +56,16 @@ try
                 Email = "support@pottafinance.com"
             }
         });
+
+        // Load XML comments so Swagger shows /// summaries, remarks, and response docs
+        var xmlFile = $"{Assembly.GetExecutingAssembly().GetName().Name}.xml";
+        var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
+        if (File.Exists(xmlPath))
+            c.IncludeXmlComments(xmlPath);
+
+        // Group endpoints by controller tag
+        c.TagActionsBy(api => new[] { api.GroupName ?? api.ActionDescriptor.RouteValues["controller"] });
+        c.DocInclusionPredicate((_, _) => true);
     });
 
     builder.Services.AddValidatorsFromAssemblyContaining<Program>();
@@ -155,7 +166,8 @@ try
 builder.Services.AddSingleton<IItemService>(provider =>
 {
     var connectionStringProvider = provider.GetRequiredService<IConnectionStringProvider>();
-    return new ItemService(connectionStringProvider.GetConnectionString());
+    var cache = provider.GetRequiredService<IMemoryCache>();
+    return new ItemService(connectionStringProvider.GetConnectionString(), cache);
 });
 
 builder.Services.AddSingleton<IOrderService>(provider =>

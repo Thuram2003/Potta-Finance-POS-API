@@ -587,7 +587,7 @@ Test-Path "C:\ProgramData\Potta Finance"
 
 **Step 3: Find the Database**
 ```powershell
-# Windows - Search for database
+`# Windows - Search for database
 Get-ChildItem -Path "C:\ProgramData" -Filter "PottaFinance.db" -Recurse -ErrorAction SilentlyContinue
 Get-ChildItem -Path "$env:LOCALAPPDATA" -Filter "PottaFinance.db" -Recurse -ErrorAction SilentlyContinue
 ```

@@ -31,5 +31,12 @@ namespace PottaAPI.Configuration
         /// Base path to the desktop application's Images folder (relative to API executable)
         /// </summary>
         public string ImageBasePath { get; set; } = "../Potta Finance/Images";
+
+        /// <summary>
+        /// Optional external/tunnel URL to use in QR codes instead of local IP.
+        /// Set this when using a dev tunnel or reverse proxy (e.g. https://xxxx-5001.use.devtunnels.ms)
+        /// Leave empty to use local IP auto-detection.
+        /// </summary>
+        public string? ExternalUrl { get; set; }
     }
 }

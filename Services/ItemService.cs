@@ -1,4 +1,5 @@
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Caching.Memory;
 using PottaAPI.Models;
 using System.Data;
 using Newtonsoft.Json;
@@ -9,30 +10,57 @@ namespace PottaAPI.Services
     public class ItemService : IItemService
     {
         private readonly string _connectionString;
+        private readonly IMemoryCache? _cache;
 
-        public ItemService(string connectionString)
+        // Cache keys
+        private const string CacheKeyAllProducts = "items:all_products";
+        private const string CacheKeyAllBundles  = "items:all_bundles";
+        private const string CacheKeyAllRecipes  = "items:all_recipes";
+        private const string CacheKeyAllItems    = "items:all_items";
+        private const string CacheKeyAssemblyIds = "items:assembly_ids";
+        private const string CacheKeyAllModifiers = "items:all_modifiers";
+        private const string CacheKeyAllCategories = "items:all_categories";
+
+        // How long list results stay cached (products change infrequently during a shift)
+        private static readonly TimeSpan ListCacheDuration = TimeSpan.FromMinutes(2);
+
+        public ItemService(string connectionString, IMemoryCache? cache = null)
         {
             _connectionString = connectionString;
+            _cache = cache;
+        }
+
+        /// <summary>Invalidates all item-related cache entries (call after any write operation).</summary>
+        public void InvalidateCache()
+        {
+            _cache?.Remove(CacheKeyAllProducts);
+            _cache?.Remove(CacheKeyAllBundles);
+            _cache?.Remove(CacheKeyAllRecipes);
+            _cache?.Remove(CacheKeyAllItems);
+            _cache?.Remove(CacheKeyAssemblyIds);
+            _cache?.Remove(CacheKeyAllModifiers);
+            _cache?.Remove(CacheKeyAllCategories);
         }
 
         #region General Item Operations
 
         public async Task<List<ItemDto>> GetAllItemsAsync()
         {
-            var items = new List<ItemDto>();
+            if (_cache != null && _cache.TryGetValue(CacheKeyAllItems, out List<ItemDto>? cached) && cached != null)
+                return cached;
 
-            // Get products
-            var products = await GetAllProductsAsync();
-            items.AddRange(products.Cast<ItemDto>());
+            // Run both queries in parallel — they use independent connections
+            var productsTask = GetAllProductsAsync();
+            var bundlesTask  = GetAllBundlesAsync();
+            await Task.WhenAll(productsTask, bundlesTask);
 
-            // Get bundles
-            var bundles = await GetAllBundlesAsync();
-            items.AddRange(bundles.Cast<ItemDto>());
+            var items = new List<ItemDto>(productsTask.Result.Count + bundlesTask.Result.Count);
+            items.AddRange(productsTask.Result.Cast<ItemDto>());
+            items.AddRange(bundlesTask.Result.Cast<ItemDto>());
+            items.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
 
-            // Note: Assembly components are already filtered in GetAllProductsAsync()
-            // No need to filter again here
-
-            return items.OrderBy(i => i.Name).ToList();
+            _cache?.Set(CacheKeyAllItems, items, ListCacheDuration);
+            return items;
         }
 
         public async Task<ItemDto?> GetItemByIdAsync(string itemId)
@@ -51,116 +79,135 @@ namespace PottaAPI.Services
         public async Task<ItemSearchResponseDto> SearchItemsAsync(ItemSearchDto searchRequest)
         {
             var items = new List<ItemDto>();
-            var totalCount = 0;
 
             using var connection = new SqliteConnection(_connectionString);
             await connection.OpenAsync();
 
+            // Build search condition fragments (no WHERE keyword — appended with AND below)
+            string productSearchCondition;
+            string bundleSearchCondition;
             var parameters = new List<SqliteParameter>();
-
-            // Build WHERE clause - MATCHES DESKTOP IMPLEMENTATION
-            // Always: status = 1 (active items only)
-            // Products: isIngredient = 0 (exclude ingredients)
-            // Search: name, sku, description, categories
-            
-            string productWhereClause;
-            string bundleWhereClause;
 
             if (!string.IsNullOrWhiteSpace(searchRequest.SearchTerm))
             {
-                // Search with term - matches Desktop SearchProducts and SearchBundleItems
-                productWhereClause = @"WHERE status = 1 AND isIngredient = 0 AND (
-                    name LIKE @searchTerm OR 
-                    sku LIKE @searchTerm OR 
-                    description LIKE @searchTerm OR
-                    categories LIKE @searchTerm
+                productSearchCondition = @"AND (
+                    p.name LIKE @searchTerm OR 
+                    p.sku  LIKE @searchTerm OR 
+                    p.description LIKE @searchTerm OR
+                    p.categories  LIKE @searchTerm
                 )";
 
-                bundleWhereClause = @"WHERE status = 1 AND (
-                    name LIKE @searchTerm OR 
-                    sku LIKE @searchTerm OR 
-                    description LIKE @searchTerm
+                bundleSearchCondition = @"AND (
+                    b.name LIKE @searchTerm OR 
+                    b.sku  LIKE @searchTerm OR 
+                    b.description LIKE @searchTerm
                 )";
 
                 parameters.Add(new SqliteParameter("@searchTerm", $"%{searchRequest.SearchTerm}%"));
             }
             else
             {
-                // No search term - return all active items (matches Desktop GetAllProducts and GetAllBundleItems)
-                productWhereClause = "WHERE status = 1 AND isIngredient = 0";
-                bundleWhereClause = "WHERE status = 1";
+                productSearchCondition = "";
+                bundleSearchCondition  = "";
             }
 
-            // Search in products (parent products only, not variations)
-            // MATCHES: ProductDatabaseService.SearchProducts()
-            var productQuery = $@"
-                SELECT productId as Id, name, sku, 'Product' as type, description, cost, salesPrice, 
-                       imagePath, status, taxable, taxId, createdDate, modifiedDate,
-                       inventoryOnHand, reorderPoint, unitOfMeasure, categories,
-                       hasVariations, variationCount, isIngredient, costPerUnit, 
-                       purchaseUnit, recipeUnit, conversionFactor, purchaseMode
-                FROM Products 
-                {productWhereClause}
-                ORDER BY name";
+            // ── Count query ────────────────────────────────────────────────────────────
+            var countCmd = connection.CreateCommand();
+            countCmd.CommandTimeout = 30;
+            countCmd.CommandText = $@"
+                SELECT
+                  (SELECT COUNT(*)
+                   FROM Products p
+                   LEFT JOIN (
+                       SELECT DISTINCT bc.productId
+                       FROM BundleComponents bc
+                       INNER JOIN BundleItems ba ON bc.bundleId = ba.bundleId
+                       WHERE (ba.structure = 'Assembly' OR ba.isRecipe = 1) AND ba.status = 1
+                   ) asmb ON asmb.productId = p.productId
+                   WHERE p.status = 1 AND p.isIngredient = 0 AND asmb.productId IS NULL
+                   {productSearchCondition})
+                +
+                  (SELECT COUNT(*)
+                   FROM BundleItems b
+                   WHERE b.status = 1
+                   {bundleSearchCondition})
+                AS totalCount";
 
-            await ExecuteSearchQuery(connection, productQuery, parameters, items, "Product");
+            foreach (var p in parameters)
+                countCmd.Parameters.Add(new SqliteParameter(p.ParameterName, p.Value));
 
-            // Search in bundles (including recipes)
-            // MATCHES: BundleItemDatabaseService.SearchBundleItems()
-            var bundleQuery = $@"
-                SELECT bundleId as Id, name, sku, 
-                       CASE WHEN isRecipe = 1 THEN 'Recipe' ELSE 'Bundle' END as type,
-                       description, cost, salesPrice, imagePath, status, taxable, taxId, 
-                       createdDate, modifiedDate, structure, inventoryOnHand, reorderPoint,
-                       isRecipe, servingSize, preparationTime, cookingInstructions
-                FROM BundleItems 
-                {bundleWhereClause}
-                ORDER BY name";
+            var totalCount = Convert.ToInt32(await countCmd.ExecuteScalarAsync() ?? 0);
 
-            await ExecuteSearchQuery(connection, bundleQuery, parameters, items, "Bundle");
-
-            // OPTIMIZED: Filter out assembly components using LEFT JOIN instead of N+1 query
-            // This prevents the separate GetProductsUsedInAssemblyBundlesAsync() call
-            var assemblyComponentIds = new HashSet<string>();
-            var assemblyCommand = connection.CreateCommand();
-            assemblyCommand.CommandText = @"
-                SELECT DISTINCT bc.productId
-                FROM BundleComponents bc
-                INNER JOIN BundleItems b ON bc.bundleId = b.bundleId
-                WHERE (b.structure = 'Assembly' OR b.isRecipe = 1) AND b.status = 1";
-            assemblyCommand.CommandTimeout = 30;
-            
-            using (var assemblyReader = await assemblyCommand.ExecuteReaderAsync())
-            {
-                while (await assemblyReader.ReadAsync())
-                {
-                    assemblyComponentIds.Add(assemblyReader.GetString(0));
-                }
-            }
-            
-            items = items.Where(i => 
-                i.Type != "Product" || !assemblyComponentIds.Contains(i.Id)
-            ).ToList();
-
-            totalCount = items.Count;
-
-            // Apply pagination
+            // ── Data query: UNION ALL with DB-level LIMIT / OFFSET ─────────────────────
             var offset = (searchRequest.Page - 1) * searchRequest.PageSize;
-            items = items.Skip(offset).Take(searchRequest.PageSize).ToList();
+
+            var dataCmd = connection.CreateCommand();
+            dataCmd.CommandTimeout = 30;
+            dataCmd.CommandText = $@"
+                SELECT p.productId as Id, p.name, p.sku, 'Product' as type, p.description,
+                       p.cost, p.salesPrice, p.imagePath, p.status, p.taxable, p.taxId,
+                       p.createdDate, p.modifiedDate, p.inventoryOnHand, p.reorderPoint,
+                       p.unitOfMeasure, p.categories, p.hasVariations, p.variationCount,
+                       p.isIngredient, p.costPerUnit, p.purchaseUnit, p.recipeUnit,
+                       p.conversionFactor, p.purchaseMode
+                FROM Products p
+                LEFT JOIN (
+                    SELECT DISTINCT bc.productId
+                    FROM BundleComponents bc
+                    INNER JOIN BundleItems ba ON bc.bundleId = ba.bundleId
+                    WHERE (ba.structure = 'Assembly' OR ba.isRecipe = 1) AND ba.status = 1
+                ) asmb ON asmb.productId = p.productId
+                WHERE p.status = 1 AND p.isIngredient = 0 AND asmb.productId IS NULL
+                {productSearchCondition}
+
+                UNION ALL
+
+                SELECT b.bundleId as Id, b.name, b.sku,
+                       CASE WHEN b.isRecipe = 1 THEN 'Recipe' ELSE 'Bundle' END as type,
+                       b.description, b.cost, b.salesPrice, b.imagePath, b.status,
+                       b.taxable, b.taxId, b.createdDate, b.modifiedDate,
+                       b.inventoryOnHand, b.reorderPoint,
+                       '' as unitOfMeasure, '' as categories,
+                       0 as hasVariations, 0 as variationCount,
+                       0 as isIngredient, 0 as costPerUnit,
+                       '' as purchaseUnit, '' as recipeUnit,
+                       1 as conversionFactor, 'Standard' as purchaseMode
+                FROM BundleItems b
+                WHERE b.status = 1
+                {bundleSearchCondition}
+
+                ORDER BY name
+                LIMIT @pageSize OFFSET @offset";
+
+            foreach (var p in parameters)
+                dataCmd.Parameters.Add(new SqliteParameter(p.ParameterName, p.Value));
+            dataCmd.Parameters.AddWithValue("@pageSize", searchRequest.PageSize);
+            dataCmd.Parameters.AddWithValue("@offset", offset);
+
+            using var reader = await dataCmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                var typeStr = reader["type"]?.ToString() ?? "Product";
+                var item = typeStr is "Bundle" or "Recipe"
+                    ? CreateBundleFromDataReader(reader)
+                    : (ItemDto?)CreateProductFromDataReader(reader);
+                if (item != null) items.Add(item);
+            }
 
             return new ItemSearchResponseDto
             {
-                Items = items,
+                Items      = items,
                 TotalCount = totalCount,
-                Page = searchRequest.Page,
-                PageSize = searchRequest.PageSize,
-                ItemType = "", // Not used in simplified search
-                Category = "" // Not used in simplified search
+                Page       = searchRequest.Page,
+                PageSize   = searchRequest.PageSize,
+                ItemType   = "",
+                Category   = ""
             };
         }
 
         private async Task ExecuteSearchQuery(SqliteConnection connection, string query, List<SqliteParameter> parameters, List<ItemDto> items, string itemType)
         {
+            // Kept for potential future use; SearchItemsAsync now uses a single UNION ALL query.
             var command = connection.CreateCommand();
             command.CommandText = query;
             command.CommandTimeout = 30;
@@ -282,35 +329,41 @@ namespace PottaAPI.Services
 
         public async Task<List<ProductDto>> GetAllProductsAsync()
         {
+            if (_cache != null && _cache.TryGetValue(CacheKeyAllProducts, out List<ProductDto>? cached) && cached != null)
+                return cached;
+
             var products = new List<ProductDto>();
 
             using var connection = new SqliteConnection(_connectionString);
             await connection.OpenAsync();
 
+            // Single query: LEFT JOIN filters out assembly components in the DB,
+            // eliminating the separate GetProductsUsedInAssemblyBundlesAsync() call.
             var command = connection.CreateCommand();
             command.CommandText = @"
-                SELECT productId, name, sku, type, description, cost, salesPrice, imagePath,
-                       inventoryOnHand, reorderPoint, status, taxable, taxId, createdDate, modifiedDate,
-                       unitOfMeasure, categories, hasVariations, variationCount, isIngredient,
-                       costPerUnit, purchaseUnit, recipeUnit, conversionFactor, purchaseMode
-                FROM Products 
-                WHERE status = 1
-                ORDER BY name";
+                SELECT p.productId, p.name, p.sku, p.type, p.description, p.cost, p.salesPrice,
+                       p.imagePath, p.inventoryOnHand, p.reorderPoint, p.status, p.taxable,
+                       p.taxId, p.createdDate, p.modifiedDate, p.unitOfMeasure, p.categories,
+                       p.hasVariations, p.variationCount, p.isIngredient,
+                       p.costPerUnit, p.purchaseUnit, p.recipeUnit, p.conversionFactor, p.purchaseMode
+                FROM Products p
+                LEFT JOIN (
+                    SELECT DISTINCT bc.productId
+                    FROM BundleComponents bc
+                    INNER JOIN BundleItems ba ON bc.bundleId = ba.bundleId
+                    WHERE (ba.structure = 'Assembly' OR ba.isRecipe = 1) AND ba.status = 1
+                ) asmb ON asmb.productId = p.productId
+                WHERE p.status = 1 AND asmb.productId IS NULL
+                ORDER BY p.name";
 
             using var reader = await command.ExecuteReaderAsync();
             while (await reader.ReadAsync())
             {
                 var product = CreateProductFromDataReader(reader);
-                if (product != null)
-                {
-                    products.Add(product);
-                }
+                if (product != null) products.Add(product);
             }
 
-            // ALWAYS filter out assembly components for POS/waiters
-            var assemblyComponentIds = await GetProductsUsedInAssemblyBundlesAsync();
-            products = products.Where(p => !assemblyComponentIds.Contains(p.Id)).ToList();
-
+            _cache?.Set(CacheKeyAllProducts, products, ListCacheDuration);
             return products;
         }
 
@@ -421,65 +474,69 @@ namespace PottaAPI.Services
 
         public async Task<ProductVariationsWithAttributesDto> GetProductVariationsWithAttributesAsync(string productId)
         {
-            var result = new ProductVariationsWithAttributesDto
-            {
-                ProductId = productId
-            };
+            var result = new ProductVariationsWithAttributesDto { ProductId = productId };
 
             using var connection = new SqliteConnection(_connectionString);
             await connection.OpenAsync();
 
-            // Get product name
+            // Product name
             var productCommand = connection.CreateCommand();
             productCommand.CommandText = "SELECT name FROM Products WHERE productId = @productId";
             productCommand.Parameters.AddWithValue("@productId", productId);
             result.ProductName = (await productCommand.ExecuteScalarAsync())?.ToString() ?? "";
 
-            // Get all attributes for this product
-            var attributesCommand = connection.CreateCommand();
-            attributesCommand.CommandText = @"
-                SELECT DISTINCT pa.attributeId, pa.attributeName
-                FROM ProductAttributes pa
-                WHERE pa.productId = @productId
-                ORDER BY pa.attributeName";
-            attributesCommand.Parameters.AddWithValue("@productId", productId);
+            // All attributes + values for this product's variations in ONE query.
+            // ProductAttributes has NO productId column — the link is:
+            //   ProductVariations (parentProductId) → VariationAttributeValues → ProductAttributes → ProductAttributeValues
+            var attrCmd = connection.CreateCommand();
+            attrCmd.CommandText = @"
+                SELECT DISTINCT
+                    pa.attributeId,
+                    pa.attributeName,
+                    pav.valueId,
+                    pav.valueName
+                FROM ProductVariations pv
+                INNER JOIN VariationAttributeValues vav ON vav.variationId = pv.variationId
+                INNER JOIN ProductAttributes pa         ON pa.attributeId  = vav.attributeId
+                LEFT  JOIN ProductAttributeValues pav   ON pav.valueId     = vav.valueId
+                WHERE pv.parentProductId = @productId
+                  AND pv.status = 1
+                ORDER BY pa.attributeName, pav.valueName";
+            attrCmd.Parameters.AddWithValue("@productId", productId);
 
-            using (var attributesReader = await attributesCommand.ExecuteReaderAsync())
+            var attributeMap = new Dictionary<string, ProductAttributeDto>();
+            using (var attrReader = await attrCmd.ExecuteReaderAsync())
             {
-                while (await attributesReader.ReadAsync())
+                while (await attrReader.ReadAsync())
                 {
-                    var attribute = new ProductAttributeDto
-                    {
-                        AttributeId = attributesReader["attributeId"]?.ToString() ?? "",
-                        AttributeName = attributesReader["attributeName"]?.ToString() ?? ""
-                    };
+                    var attrId   = attrReader["attributeId"]?.ToString() ?? "";
+                    var attrName = attrReader["attributeName"]?.ToString() ?? "";
 
-                    // Get all values for this attribute
-                    var valuesCommand = connection.CreateCommand();
-                    valuesCommand.CommandText = @"
-                        SELECT DISTINCT pav.valueId, pav.valueName
-                        FROM ProductAttributeValues pav
-                        WHERE pav.attributeId = @attributeId
-                        ORDER BY pav.valueName";
-                    valuesCommand.Parameters.AddWithValue("@attributeId", attribute.AttributeId);
-
-                    using (var valuesReader = await valuesCommand.ExecuteReaderAsync())
+                    if (!attributeMap.TryGetValue(attrId, out var attr))
                     {
-                        while (await valuesReader.ReadAsync())
+                        attr = new ProductAttributeDto { AttributeId = attrId, AttributeName = attrName };
+                        attributeMap[attrId] = attr;
+                    }
+
+                    var valueId   = attrReader["valueId"]?.ToString();
+                    var valueName = attrReader["valueName"]?.ToString();
+                    if (!string.IsNullOrEmpty(valueId))
+                    {
+                        // Avoid duplicates (DISTINCT on the SQL side handles most cases)
+                        if (!attr.Values.Any(v => v.ValueId == valueId))
                         {
-                            attribute.Values.Add(new ProductAttributeValueDto
+                            attr.Values.Add(new ProductAttributeValueDto
                             {
-                                ValueId = valuesReader["valueId"]?.ToString() ?? "",
-                                ValueName = valuesReader["valueName"]?.ToString() ?? ""
+                                ValueId   = valueId,
+                                ValueName = valueName ?? ""
                             });
                         }
                     }
-
-                    result.Attributes.Add(attribute);
                 }
             }
+            result.Attributes.AddRange(attributeMap.Values);
 
-            // Get all variations
+            // Variations (reuses existing method)
             result.Variations = await GetProductVariationsAsync(productId);
 
             return result;
@@ -546,6 +603,9 @@ namespace PottaAPI.Services
 
         public async Task<List<BundleDto>> GetAllBundlesAsync()
         {
+            if (_cache != null && _cache.TryGetValue(CacheKeyAllBundles, out List<BundleDto>? cached) && cached != null)
+                return cached;
+
             var bundles = new List<BundleDto>();
 
             using var connection = new SqliteConnection(_connectionString);
@@ -564,12 +624,10 @@ namespace PottaAPI.Services
             while (await reader.ReadAsync())
             {
                 var bundle = CreateBundleFromDataReader(reader);
-                if (bundle != null)
-                {
-                    bundles.Add(bundle);
-                }
+                if (bundle != null) bundles.Add(bundle);
             }
 
+            _cache?.Set(CacheKeyAllBundles, bundles, ListCacheDuration);
             return bundles;
         }
 
@@ -603,6 +661,9 @@ namespace PottaAPI.Services
 
         public async Task<List<BundleDto>> GetAllRecipesAsync()
         {
+            if (_cache != null && _cache.TryGetValue(CacheKeyAllRecipes, out List<BundleDto>? cached) && cached != null)
+                return cached;
+
             var recipes = new List<BundleDto>();
 
             using var connection = new SqliteConnection(_connectionString);
@@ -621,12 +682,10 @@ namespace PottaAPI.Services
             while (await reader.ReadAsync())
             {
                 var recipe = CreateBundleFromDataReader(reader);
-                if (recipe != null)
-                {
-                    recipes.Add(recipe);
-                }
+                if (recipe != null) recipes.Add(recipe);
             }
 
+            _cache?.Set(CacheKeyAllRecipes, recipes, ListCacheDuration);
             return recipes;
         }
 
@@ -668,6 +727,9 @@ namespace PottaAPI.Services
 
         public async Task<List<CategoryDto>> GetAllCategoriesAsync()
         {
+            if (_cache != null && _cache.TryGetValue(CacheKeyAllCategories, out List<CategoryDto>? cached) && cached != null)
+                return cached;
+
             var categories = new List<CategoryDto>();
 
             using var connection = new SqliteConnection(_connectionString);
@@ -695,6 +757,7 @@ namespace PottaAPI.Services
                 });
             }
 
+            _cache?.Set(CacheKeyAllCategories, categories, ListCacheDuration);
             return categories;
         }
 
@@ -1047,6 +1110,9 @@ namespace PottaAPI.Services
 
         public async Task<List<ModifierDto>> GetAllModifiersAsync()
         {
+            if (_cache != null && _cache.TryGetValue(CacheKeyAllModifiers, out List<ModifierDto>? cached) && cached != null)
+                return cached;
+
             var modifiers = new List<ModifierDto>();
 
             using var connection = new SqliteConnection(_connectionString);
@@ -1081,6 +1147,7 @@ namespace PottaAPI.Services
                 });
             }
 
+            _cache?.Set(CacheKeyAllModifiers, modifiers, ListCacheDuration);
             return modifiers;
         }
 
