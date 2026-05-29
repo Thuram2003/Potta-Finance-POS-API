@@ -1,7 +1,8 @@
 using Microsoft.Data.Sqlite;
 using PottaAPI.Models;
-using PottaAPI.Services;
 using System.Data;
+using Dapper;
+using PottaAPI.Services.Interfaces;
 
 namespace PottaAPI.Services
 {
@@ -12,20 +13,16 @@ namespace PottaAPI.Services
     {
         private readonly string _connectionString;
 
-        public CustomerService(string connectionString)
+        public CustomerService(IConnectionStringProvider connectionStringProvider)
         {
-            _connectionString = connectionString;
+            _connectionString = connectionStringProvider.GetConnectionString();
         }
 
         public async Task<List<CustomerDto>> GetAllCustomersAsync()
         {
-            var customers = new List<CustomerDto>();
-
             using var connection = new SqliteConnection(_connectionString);
-            await connection.OpenAsync();
-
-            var command = connection.CreateCommand();
-            command.CommandText = @"
+            
+            var sql = @"
                 SELECT customerId, firstName, lastName, gender, contactPerson, email, 
                        phone, date_of_birth, creditLimit, address, city, state, postalCode, 
                        country, taxId, type, openingBalance, createdDate, 
@@ -34,46 +31,41 @@ namespace PottaAPI.Services
                 WHERE isActive = 1
                 ORDER BY firstName, lastName";
 
-            using var reader = await command.ExecuteReaderAsync();
-            while (await reader.ReadAsync())
+            var customers = await connection.QueryAsync<CustomerDto>(sql);
+            
+            // Post-process to handle defaults
+            foreach (var customer in customers)
             {
-                customers.Add(CreateCustomerFromDataReader(reader));
+                if (string.IsNullOrWhiteSpace(customer.Country))
+                    customer.Country = "Cameroon";
             }
-
-            return customers;
+            
+            return customers.ToList();
         }
 
         public async Task<CustomerDto?> GetCustomerByIdAsync(string customerId)
         {
             using var connection = new SqliteConnection(_connectionString);
-            await connection.OpenAsync();
-
-            var command = connection.CreateCommand();
-            command.CommandText = @"
+            
+            var sql = @"
                 SELECT customerId, firstName, lastName, gender, contactPerson, email, 
                        phone, date_of_birth, creditLimit, address, city, state, postalCode, 
                        country, taxId, type, openingBalance, createdDate, 
                        modifiedDate, isActive
                 FROM Customer 
                 WHERE customerId = @customerId AND isActive = 1";
-            command.Parameters.AddWithValue("@customerId", customerId);
 
-            using var reader = await command.ExecuteReaderAsync();
-            if (await reader.ReadAsync())
-            {
-                return CreateCustomerFromDataReader(reader);
-            }
-
-            return null;
+            var customer = await connection.QueryFirstOrDefaultAsync<CustomerDto>(sql, new { customerId });
+            
+            if (customer != null && string.IsNullOrWhiteSpace(customer.Country))
+                customer.Country = "Cameroon";
+            
+            return customer;
         }
 
         public async Task<CustomerSearchResponseDto> SearchCustomersAsync(CustomerSearchDto searchRequest)
         {
-            var customers = new List<CustomerDto>();
-            var totalCount = 0;
-
             using var connection = new SqliteConnection(_connectionString);
-            await connection.OpenAsync();
 
             // Build the WHERE clause
             var whereClause = searchRequest.IncludeInactive ? "" : "WHERE isActive = 1";
@@ -95,21 +87,15 @@ namespace PottaAPI.Services
                 }
             }
 
-            // Get total count first
-            var countCommand = connection.CreateCommand();
-            countCommand.CommandText = $"SELECT COUNT(*) FROM Customer {whereClause} {searchClause}";
-            
-            if (!string.IsNullOrWhiteSpace(searchRequest.SearchTerm))
-            {
-                countCommand.Parameters.AddWithValue("@search", $"%{searchRequest.SearchTerm}%");
-            }
+            var searchParam = $"%{searchRequest.SearchTerm}%";
+            var parameters = new { search = searchParam, pageSize = searchRequest.PageSize, offset = (searchRequest.Page - 1) * searchRequest.PageSize };
 
-            totalCount = Convert.ToInt32(await countCommand.ExecuteScalarAsync());
+            // Get total count
+            var countSql = $"SELECT COUNT(*) FROM Customer {whereClause} {searchClause}";
+            var totalCount = await connection.ExecuteScalarAsync<int>(countSql, string.IsNullOrWhiteSpace(searchRequest.SearchTerm) ? null : new { search = searchParam });
 
             // Get paginated results
-            var offset = (searchRequest.Page - 1) * searchRequest.PageSize;
-            var dataCommand = connection.CreateCommand();
-            dataCommand.CommandText = $@"
+            var dataSql = $@"
                 SELECT customerId, firstName, lastName, gender, contactPerson, email, 
                        phone, date_of_birth, creditLimit, address, city, state, postalCode, 
                        country, taxId, type, openingBalance, createdDate, 
@@ -119,17 +105,13 @@ namespace PottaAPI.Services
                 ORDER BY firstName, lastName
                 LIMIT @pageSize OFFSET @offset";
 
-            if (!string.IsNullOrWhiteSpace(searchRequest.SearchTerm))
+            var customers = (await connection.QueryAsync<CustomerDto>(dataSql, parameters)).ToList();
+            
+            // Post-process to handle defaults
+            foreach (var customer in customers)
             {
-                dataCommand.Parameters.AddWithValue("@search", $"%{searchRequest.SearchTerm}%");
-            }
-            dataCommand.Parameters.AddWithValue("@pageSize", searchRequest.PageSize);
-            dataCommand.Parameters.AddWithValue("@offset", offset);
-
-            using var reader = await dataCommand.ExecuteReaderAsync();
-            while (await reader.ReadAsync())
-            {
-                customers.Add(CreateCustomerFromDataReader(reader));
+                if (string.IsNullOrWhiteSpace(customer.Country))
+                    customer.Country = "Cameroon";
             }
 
             return new CustomerSearchResponseDto
@@ -144,13 +126,8 @@ namespace PottaAPI.Services
         public async Task<CustomerStatisticsDto> GetCustomerStatisticsAsync()
         {
             using var connection = new SqliteConnection(_connectionString);
-            await connection.OpenAsync();
 
-            var stats = new CustomerStatisticsDto();
-
-            // Get basic counts
-            var command = connection.CreateCommand();
-            command.CommandText = @"
+            var sql = @"
                 SELECT 
                     COUNT(*) as TotalCustomers,
                     SUM(CASE WHEN isActive = 1 THEN 1 ELSE 0 END) as ActiveCustomers,
@@ -163,101 +140,31 @@ namespace PottaAPI.Services
                     MAX(createdDate) as LastCustomerCreated
                 FROM Customer";
 
-            using var reader = await command.ExecuteReaderAsync();
-            if (await reader.ReadAsync())
-            {
-                stats.TotalCustomers = reader.IsDBNull("TotalCustomers") ? 0 : reader.GetInt32("TotalCustomers");
-                stats.ActiveCustomers = reader.IsDBNull("ActiveCustomers") ? 0 : reader.GetInt32("ActiveCustomers");
-                stats.InactiveCustomers = reader.IsDBNull("InactiveCustomers") ? 0 : reader.GetInt32("InactiveCustomers");
-                stats.IndividualCustomers = reader.IsDBNull("IndividualCustomers") ? 0 : reader.GetInt32("IndividualCustomers");
-                stats.BusinessCustomers = reader.IsDBNull("BusinessCustomers") ? 0 : reader.GetInt32("BusinessCustomers");
-                stats.CustomersWithEmail = reader.IsDBNull("CustomersWithEmail") ? 0 : reader.GetInt32("CustomersWithEmail");
-                stats.CustomersWithPhone = reader.IsDBNull("CustomersWithPhone") ? 0 : reader.GetInt32("CustomersWithPhone");
-                stats.TotalOpeningBalance = reader.IsDBNull("TotalOpeningBalance") ? 0 : reader.GetDecimal("TotalOpeningBalance");
-                
-                if (!reader.IsDBNull("LastCustomerCreated"))
-                {
-                    stats.LastCustomerCreated = reader.GetDateTime("LastCustomerCreated");
-                }
-            }
+            var stats = await connection.QueryFirstOrDefaultAsync<CustomerStatisticsDto>(sql) ?? new CustomerStatisticsDto();
 
             // Get most common country
-            var countryCommand = connection.CreateCommand();
-            countryCommand.CommandText = @"
-                SELECT country, COUNT(*) as count 
+            var countrySql = @"
+                SELECT country
                 FROM Customer 
                 WHERE country IS NOT NULL AND country != '' AND isActive = 1
                 GROUP BY country 
-                ORDER BY count DESC 
+                ORDER BY COUNT(*) DESC 
                 LIMIT 1";
-
-            using var countryReader = await countryCommand.ExecuteReaderAsync();
-            if (await countryReader.ReadAsync())
-            {
-                stats.MostCommonCountry = countryReader["country"]?.ToString() ?? "";
-            }
+            stats.MostCommonCountry = await connection.QueryFirstOrDefaultAsync<string>(countrySql) ?? "";
 
             // Get most common city
-            var cityCommand = connection.CreateCommand();
-            cityCommand.CommandText = @"
-                SELECT city, COUNT(*) as count 
+            var citySql = @"
+                SELECT city
                 FROM Customer 
                 WHERE city IS NOT NULL AND city != '' AND isActive = 1
                 GROUP BY city 
-                ORDER BY count DESC 
+                ORDER BY COUNT(*) DESC 
                 LIMIT 1";
+            stats.MostCommonCity = await connection.QueryFirstOrDefaultAsync<string>(citySql) ?? "";
 
-            using var cityReader = await cityCommand.ExecuteReaderAsync();
-            if (await cityReader.ReadAsync())
-            {
-                stats.MostCommonCity = cityReader["city"]?.ToString() ?? "";
-            }
-
-            // TODO: Calculate current balance from transactions
             stats.TotalCurrentBalance = stats.TotalOpeningBalance;
 
             return stats;
-        }
-
-        private CustomerDto CreateCustomerFromDataReader(SqliteDataReader reader)
-        {
-            var customer = new CustomerDto
-            {
-                CustomerId = reader["customerId"]?.ToString() ?? "",
-                FirstName = reader["firstName"]?.ToString() ?? "",
-                LastName = reader["lastName"]?.ToString() ?? "",
-                Gender = reader["gender"]?.ToString() ?? "",
-                ContactPerson = reader["contactPerson"]?.ToString() ?? "",
-                Email = reader["email"]?.ToString() ?? "",
-                Phone = reader["phone"]?.ToString() ?? "",
-                CreditLimit = reader["creditLimit"]?.ToString() ?? "",
-                Address = reader["address"]?.ToString() ?? "",
-                City = reader["city"]?.ToString() ?? "",
-                State = reader["state"]?.ToString() ?? "",
-                PostalCode = reader["postalCode"]?.ToString() ?? "",
-                TaxId = reader["taxId"]?.ToString() ?? "",
-                Type = reader["type"]?.ToString() ?? "",
-                OpeningBalance = reader.IsDBNull("openingBalance") ? 0 : reader.GetDecimal("openingBalance"),
-                CreatedDate = reader.GetDateTime("createdDate"),
-                ModifiedDate = reader.GetDateTime("modifiedDate"),
-                IsActive = reader.GetBoolean("isActive"),
-                Balance = 0 // TODO: Calculate from transactions if needed
-            };
-
-            // Handle DateOfBirth
-            if (!reader.IsDBNull("date_of_birth") && !string.IsNullOrEmpty(reader["date_of_birth"].ToString()))
-            {
-                if (DateTime.TryParse(reader["date_of_birth"].ToString(), out DateTime dob))
-                {
-                    customer.DateOfBirth = dob;
-                }
-            }
-
-            // Set country from database, but if it's empty, default to Cameroon
-            var countryValue = reader["country"]?.ToString();
-            customer.Country = string.IsNullOrWhiteSpace(countryValue) ? "Cameroon" : countryValue;
-
-            return customer;
         }
     }
 }

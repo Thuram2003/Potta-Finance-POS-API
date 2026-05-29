@@ -13,6 +13,7 @@ using FluentValidation;
 using FluentValidation.AspNetCore;
 using Serilog;
 using AspNetCoreRateLimit;
+using PottaAPI.Services.Interfaces;
 
 Log.Logger = new LoggerConfiguration()
     .WriteTo.Console()
@@ -42,7 +43,7 @@ try
 
     builder.Services.AddControllers();
     builder.Services.AddEndpointsApiExplorer();
-    
+
     builder.Services.AddSwaggerGen(c =>
     {
         c.SwaggerDoc("v1", new Microsoft.OpenApi.Models.OpenApiInfo
@@ -57,13 +58,11 @@ try
             }
         });
 
-        // Load XML comments so Swagger shows /// summaries, remarks, and response docs
         var xmlFile = $"{Assembly.GetExecutingAssembly().GetName().Name}.xml";
         var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
         if (File.Exists(xmlPath))
             c.IncludeXmlComments(xmlPath);
 
-        // Group endpoints by controller tag
         c.TagActionsBy(api => new[] { api.GroupName ?? api.ActionDescriptor.RouteValues["controller"] });
         c.DocInclusionPredicate((_, _) => true);
     });
@@ -98,7 +97,6 @@ try
     });
 
     builder.Services.AddResponseCaching();
-
     builder.Services.AddMemoryCache();
 
     builder.Services.Configure<IpRateLimitOptions>(builder.Configuration.GetSection("IpRateLimiting"));
@@ -107,7 +105,6 @@ try
     builder.Services.AddSingleton<IRateLimitConfiguration, RateLimitConfiguration>();
 
     builder.Services.AddHealthChecks();
-
     builder.Services.AddDirectoryBrowser();
 
     builder.Services.AddCors(options =>
@@ -115,114 +112,44 @@ try
         options.AddPolicy(corsOptions.PolicyName, policy =>
         {
             if (corsOptions.AllowedOrigins.Contains("*"))
-            {
                 policy.AllowAnyOrigin();
-            }
             else
-            {
                 policy.WithOrigins(corsOptions.AllowedOrigins.ToArray())
                       .SetIsOriginAllowedToAllowWildcardSubdomains();
-            }
 
             if (corsOptions.AllowedMethods.Contains("*"))
-            {
                 policy.AllowAnyMethod();
-            }
             else
-            {
                 policy.WithMethods(corsOptions.AllowedMethods.ToArray());
-            }
 
             if (corsOptions.AllowedHeaders.Contains("*"))
-            {
                 policy.AllowAnyHeader();
-            }
             else
-            {
                 policy.WithHeaders(corsOptions.AllowedHeaders.ToArray());
-            }
 
             if (corsOptions.AllowCredentials)
-            {
                 policy.AllowCredentials();
-            }
         });
     });
 
+    // ── Core Services ──
     builder.Services.AddSingleton<IConnectionStringProvider, ConnectionStringProvider>();
+    builder.Services.AddScoped<IDatabaseService, DatabaseService>();
 
-    builder.Services.AddSingleton<IDatabaseService>(provider =>
-    {
-        var connectionStringProvider = provider.GetRequiredService<IConnectionStringProvider>();
-        return new DatabaseService(connectionStringProvider);
-    });
-
-    builder.Services.AddSingleton<ICustomerService>(provider =>
-{
-    var connectionStringProvider = provider.GetRequiredService<IConnectionStringProvider>();
-    return new CustomerService(connectionStringProvider.GetConnectionString());
-});
-
-builder.Services.AddSingleton<IItemService>(provider =>
-{
-    var connectionStringProvider = provider.GetRequiredService<IConnectionStringProvider>();
-    var cache = provider.GetRequiredService<IMemoryCache>();
-    return new ItemService(connectionStringProvider.GetConnectionString(), cache);
-});
-
-builder.Services.AddSingleton<IOrderService>(provider =>
-{
-    var connectionStringProvider = provider.GetRequiredService<IConnectionStringProvider>();
-    var taxService = provider.GetRequiredService<ITaxService>();
-    return new OrderService(connectionStringProvider.GetConnectionString(), taxService);
-});
-
-builder.Services.AddSingleton<ITableService>(provider =>
-{
-    var connectionStringProvider = provider.GetRequiredService<IConnectionStringProvider>();
-    return new TableService(connectionStringProvider.GetConnectionString());
-});
-
-builder.Services.AddSingleton<IStaffService>(provider =>
-{
-    var connectionStringProvider = provider.GetRequiredService<IConnectionStringProvider>();
-    return new StaffService(connectionStringProvider.GetConnectionString());
-});
-
-builder.Services.AddSingleton<ITaxService>(provider =>
-{
-    var connectionStringProvider = provider.GetRequiredService<IConnectionStringProvider>();
-    var logger = provider.GetRequiredService<ILogger<TaxService>>();
-    return new TaxService(connectionStringProvider, logger);
-});
-
-builder.Services.AddSingleton<IDiscountService>(provider =>
-{
-    var connectionStringProvider = provider.GetRequiredService<IConnectionStringProvider>();
-    var logger = provider.GetRequiredService<ILogger<DiscountService>>();
-    return new DiscountService(connectionStringProvider, logger);
-});
-
-builder.Services.AddSingleton<IFloorPlanService>(provider =>
-{
-    var connectionStringProvider = provider.GetRequiredService<IConnectionStringProvider>();
-    return new FloorPlanService(connectionStringProvider.GetConnectionString());
-});
-
-builder.Services.AddSingleton<IRestaurantOperationsService>(provider =>
-{
-    var databaseService = provider.GetRequiredService<IDatabaseService>() as DatabaseService 
-        ?? throw new InvalidOperationException("DatabaseService is required");
-    var orderService = provider.GetRequiredService<IOrderService>();
-    var staffService = provider.GetRequiredService<IStaffService>();
-    var tableService = provider.GetRequiredService<ITableService>();
-    
-    return new RestaurantOperationsService(databaseService, orderService, staffService, tableService);
-});
+    builder.Services.AddScoped<ICustomerService, CustomerService>();
+    builder.Services.AddSingleton<IItemService, ItemService>();
+    builder.Services.AddScoped<IOrderService, OrderService>();
+    builder.Services.AddScoped<ITableService, TableService>();
+    builder.Services.AddScoped<IStaffService, StaffService>();
+    builder.Services.AddScoped<ITaxService, TaxService>();
+    builder.Services.AddScoped<IDiscountService, DiscountService>();
+    builder.Services.AddScoped<IFloorPlanService, FloorPlanService>();
+    builder.Services.AddScoped<IOrderOperationsService, OrderOperationsService>();
+    builder.Services.AddScoped<IBillRequestService, BillRequestService>();
+    builder.Services.AddScoped<IOrderTaxService, OrderTaxService>();
 
     var app = builder.Build();
 
-    // Log environment and configuration
     Log.Information("========================================");
     Log.Information("Environment: {Environment}", app.Environment.EnvironmentName);
     Log.Information("Database file: {DatabaseFile}", databaseOptions.FileName);
@@ -245,41 +172,48 @@ builder.Services.AddSingleton<IRestaurantOperationsService>(provider =>
             diagnosticContext.Set("RemoteIP", httpContext.Connection.RemoteIpAddress);
         };
     });
-    
+
     app.UseGlobalExceptionHandler();
 
     app.UseWhen(
-        context => !context.Request.Path.StartsWithSegments("/images") && 
+        context => !context.Request.Path.StartsWithSegments("/images") &&
                    !context.Request.Path.StartsWithSegments("/swagger") &&
-                   !context.Request.Path.Value.EndsWith(".html") &&
-                   !context.Request.Path.Value.EndsWith(".css") &&
-                   !context.Request.Path.Value.EndsWith(".js"),
+                   !context.Request.Path.Value?.EndsWith(".html") != true &&
+                   !context.Request.Path.Value?.EndsWith(".css") != true &&
+                   !context.Request.Path.Value?.EndsWith(".js") != true,
         appBuilder => appBuilder.UseIpRateLimiting()
     );
 
     app.UseResponseCaching();
-
     app.UseSwagger();
     app.UseSwaggerUI(Theme.Dark);
 
     app.Use(async (context, next) =>
     {
-    if (context.Request.Path == "/")
-    {
-        context.Response.Redirect("/swagger");
-        return;
-    }
-    await next();
+        if (context.Request.Path == "/")
+        {
+            context.Response.Redirect("/swagger");
+            return;
+        }
+        await next();
     });
 
     app.UseStaticFiles();
 
-    var desktopAppImagePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, apiOptions.ImageBasePath);
-    var resolvedImagePath = Path.GetFullPath(desktopAppImagePath);
-    
+    string resolvedImagePath;
+#if DEBUG
+    var baseDirectory = AppDomain.CurrentDomain.BaseDirectory;
+    resolvedImagePath = Path.GetFullPath(Path.Combine(baseDirectory, "../../../../Potta Finance/bin/Debug/net8.0-windows/Images"));
+    Log.Information("DEBUG MODE: Image path determination");
+#else
+    var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+    resolvedImagePath = Path.Combine(localAppData, "Instanvi", "Potta Finance POS", "Images");
+    Log.Information("PRODUCTION MODE: Image path determination");
+#endif
+
     if (Directory.Exists(resolvedImagePath))
     {
-        Log.Information("✓ Serving images from: {ImagePath}", resolvedImagePath);
+        Log.Information("Serving images from: {ImagePath}", resolvedImagePath);
         app.UseStaticFiles(new StaticFileOptions
         {
             FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(resolvedImagePath),
@@ -295,20 +229,25 @@ builder.Services.AddSingleton<IRestaurantOperationsService>(provider =>
     }
     else
     {
-        Log.Warning("✗ Desktop app image folder not found at: {ImagePath}", resolvedImagePath);
-        Log.Warning("  Configured path: {ConfigPath}", apiOptions.ImageBasePath);
-        Log.Warning("  Image serving may not work correctly");
+        Log.Warning("Desktop app image folder not found at: {ImagePath}", resolvedImagePath);
+        try
+        {
+            Directory.CreateDirectory(resolvedImagePath);
+            Log.Information("Created image directory: {ImagePath}", resolvedImagePath);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to create image directory");
+        }
     }
 
     app.UseDirectoryBrowser();
-
     app.UseCors(corsOptions.PolicyName);
     app.UseAuthorization();
 
     app.MapHealthChecks("/health");
     app.MapHealthChecks("/health/ready");
     app.MapHealthChecks("/health/live");
-
     app.MapControllers();
 
     using (var scope = app.Services.CreateScope())
@@ -318,12 +257,11 @@ builder.Services.AddSingleton<IRestaurantOperationsService>(provider =>
         {
             Log.Information("Testing database connection...");
             await dbService.TestConnectionAsync();
-            Log.Information("✓ Database connection successful");
+            Log.Information("Database connection successful");
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "✗ Database connection failed - API will continue but database operations may fail");
-            Log.Error("Database search paths: {SearchPaths}", string.Join(", ", databaseOptions.SearchPaths));
+            Log.Error(ex, "Database connection failed - API will continue but database operations may fail");
         }
     }
 
@@ -354,9 +292,7 @@ string GetServerIPAddress()
     foreach (var address in ipHostInfo.AddressList)
     {
         if (address.AddressFamily == AddressFamily.InterNetwork)
-        {
             return address.ToString();
-        }
     }
     return string.Empty;
 }

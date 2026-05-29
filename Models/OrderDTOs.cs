@@ -381,4 +381,13 @@ namespace PottaAPI.Models
         public DateTime? LastOrderTime { get; set; }
         public string Status { get; set; } = "Available";
     }
+
+    public class UpdateTransactionItemsDto
+    {
+        [Required(ErrorMessage = "Items list is required")]
+        [MinLength(1, ErrorMessage = "Order must contain at least one item")]
+        public List<WaitingTransactionItemDto> Items { get; set; } = new();
+
+        public int? StaffId { get; set; }
+    }
 }

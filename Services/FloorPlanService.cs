@@ -4,6 +4,8 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Data.Sqlite;
 using PottaAPI.Models;
+using Dapper;
+using PottaAPI.Services.Interfaces;
 
 namespace PottaAPI.Services
 {
@@ -15,22 +17,19 @@ namespace PottaAPI.Services
     {
         private readonly string _connectionString;
 
-        public FloorPlanService(string connectionString)
+        public FloorPlanService(IConnectionStringProvider connectionStringProvider)
         {
-            _connectionString = connectionString;
+            _connectionString = connectionStringProvider.GetConnectionString();
         }
 
         #region Floor Plan Operations
 
         public async Task<List<FloorPlanListDto>> GetAllFloorPlansAsync()
         {
-            var floorPlans = new List<FloorPlanListDto>();
-
             using var connection = new SqliteConnection(_connectionString);
             await connection.OpenAsync();
 
-            var command = connection.CreateCommand();
-            command.CommandText = @"
+            var sql = @"
                 SELECT 
                     fp.floorPlanId, 
                     fp.floorName, 
@@ -45,22 +44,8 @@ namespace PottaAPI.Services
                 GROUP BY fp.floorPlanId, fp.floorName, fp.floorNumber, fp.isActive, fp.createdDate, fp.modifiedDate
                 ORDER BY fp.floorNumber ASC";
 
-            using var reader = await command.ExecuteReaderAsync();
-            while (await reader.ReadAsync())
-            {
-                floorPlans.Add(new FloorPlanListDto
-                {
-                    FloorPlanId = reader["floorPlanId"]?.ToString() ?? "",
-                    FloorName = reader["floorName"]?.ToString() ?? "",
-                    FloorNumber = Convert.ToInt32(reader["floorNumber"]),
-                    IsActive = Convert.ToBoolean(reader["isActive"]),
-                    ElementCount = Convert.ToInt32(reader["elementCount"]),
-                    CreatedDate = Convert.ToDateTime(reader["createdDate"]),
-                    ModifiedDate = Convert.ToDateTime(reader["modifiedDate"])
-                });
-            }
-
-            return floorPlans;
+            var floorPlans = await connection.QueryAsync<FloorPlanListDto>(sql);
+            return floorPlans.ToList();
         }
 
         public async Task<FloorPlanDetailDto?> GetFloorPlanByIdAsync(string floorPlanId)
@@ -69,32 +54,13 @@ namespace PottaAPI.Services
             await connection.OpenAsync();
 
             // Get floor plan metadata
-            var floorPlanCommand = connection.CreateCommand();
-            floorPlanCommand.CommandText = @"
+            var floorPlanSql = @"
                 SELECT floorPlanId, floorName, floorNumber, isActive, 
                        createdDate, modifiedDate
                 FROM FloorPlans 
                 WHERE floorPlanId = @floorPlanId";
-            floorPlanCommand.Parameters.AddWithValue("@floorPlanId", floorPlanId);
 
-            FloorPlanDetailDto? floorPlan = null;
-
-            using (var reader = await floorPlanCommand.ExecuteReaderAsync())
-            {
-                if (await reader.ReadAsync())
-                {
-                    floorPlan = new FloorPlanDetailDto
-                    {
-                        FloorPlanId = reader["floorPlanId"]?.ToString() ?? "",
-                        FloorName = reader["floorName"]?.ToString() ?? "",
-                        FloorNumber = Convert.ToInt32(reader["floorNumber"]),
-                        IsActive = Convert.ToBoolean(reader["isActive"]),
-                        CreatedDate = Convert.ToDateTime(reader["createdDate"]),
-                        ModifiedDate = Convert.ToDateTime(reader["modifiedDate"]),
-                        Elements = new List<FloorPlanElementDto>()
-                    };
-                }
-            }
+            var floorPlan = await connection.QueryFirstOrDefaultAsync<FloorPlanDetailDto>(floorPlanSql, new { floorPlanId });
 
             if (floorPlan == null)
             {
@@ -102,19 +68,19 @@ namespace PottaAPI.Services
             }
 
             // Get all elements for this floor plan
-            var elementsCommand = connection.CreateCommand();
-            elementsCommand.CommandText = @"
+            // CAST to REAL to ensure proper double conversion from SQLite
+            var elementsSql = @"
                 SELECT 
                     fpe.floorPlanElementId,
                     fpe.floorPlanId,
                     fpe.elementId,
                     fpe.tableId,
                     fpe.elementType,
-                    fpe.xPosition,
-                    fpe.yPosition,
-                    fpe.width,
-                    fpe.height,
-                    fpe.rotation,
+                    CAST(fpe.xPosition AS REAL) as xPosition,
+                    CAST(fpe.yPosition AS REAL) as yPosition,
+                    CAST(fpe.width AS REAL) as width,
+                    CAST(fpe.height AS REAL) as height,
+                    CAST(fpe.rotation AS REAL) as rotation,
                     fpe.zIndex,
                     fpe.customColor,
                     fpe.customLabel,
@@ -131,50 +97,19 @@ namespace PottaAPI.Services
                 LEFT JOIN Tables t ON fpe.tableId = t.tableId AND t.isActive = 1
                 WHERE fpe.floorPlanId = @floorPlanId
                 ORDER BY fpe.zIndex, fpe.createdDate";
-            elementsCommand.Parameters.AddWithValue("@floorPlanId", floorPlanId);
 
-            using (var reader = await elementsCommand.ExecuteReaderAsync())
-            {
-                while (await reader.ReadAsync())
+            var elements = await connection.QueryAsync<FloorPlanElementDto, FloorPlanTableInfoDto?, FloorPlanElementDto>(
+                elementsSql,
+                (element, tableInfo) =>
                 {
-                    var element = new FloorPlanElementDto
-                    {
-                        FloorPlanElementId = reader["floorPlanElementId"]?.ToString() ?? "",
-                        FloorPlanId = reader["floorPlanId"]?.ToString() ?? "",
-                        ElementId = reader["elementId"] == DBNull.Value ? null : reader["elementId"]?.ToString(),
-                        TableId = reader["tableId"] == DBNull.Value ? null : reader["tableId"]?.ToString(),
-                        ElementType = reader["elementType"]?.ToString() ?? "Unknown",
-                        XPosition = Convert.ToDouble(reader["xPosition"]),
-                        YPosition = Convert.ToDouble(reader["yPosition"]),
-                        Width = Convert.ToDouble(reader["width"]),
-                        Height = Convert.ToDouble(reader["height"]),
-                        Rotation = Convert.ToDouble(reader["rotation"]),
-                        ZIndex = Convert.ToInt32(reader["zIndex"]),
-                        CustomColor = reader["customColor"] == DBNull.Value ? null : reader["customColor"]?.ToString(),
-                        CustomLabel = reader["customLabel"] == DBNull.Value ? null : reader["customLabel"]?.ToString(),
-                        IsLocked = Convert.ToBoolean(reader["isLocked"]),
-                        CreatedDate = Convert.ToDateTime(reader["createdDate"]),
-                        ModifiedDate = Convert.ToDateTime(reader["modifiedDate"])
-                    };
+                    element.TableInfo = tableInfo;
+                    return element;
+                },
+                new { floorPlanId },
+                splitOn: "tableName"
+            );
 
-                    // Add table information if this element is a table
-                    if (!string.IsNullOrEmpty(element.TableId))
-                    {
-                        element.TableInfo = new FloorPlanTableInfoDto
-                        {
-                            TableId = element.TableId,
-                            TableName = reader["tableName"] == DBNull.Value ? null : reader["tableName"]?.ToString(),
-                            TableNumber = reader["tableNumber"] == DBNull.Value ? 0 : Convert.ToInt32(reader["tableNumber"]),
-                            Capacity = reader["capacity"] == DBNull.Value ? 0 : Convert.ToInt32(reader["capacity"]),
-                            Status = reader["tableStatus"] == DBNull.Value ? "Available" : reader["tableStatus"]?.ToString() ?? "Available",
-                            Size = reader["tableSize"] == DBNull.Value ? null : reader["tableSize"]?.ToString(),
-                            Shape = reader["tableShape"] == DBNull.Value ? null : reader["tableShape"]?.ToString()
-                        };
-                    }
-
-                    floorPlan.Elements.Add(element);
-                }
-            }
+            floorPlan.Elements = elements.ToList();
 
             // Calculate canvas dimensions based on element positions
             if (floorPlan.Elements.Any())

@@ -2,847 +2,192 @@ using Microsoft.AspNetCore.Mvc;
 using PottaAPI.Models;
 using PottaAPI.Models.Common;
 using PottaAPI.Services;
+using PottaAPI.Services.Interfaces;
 
-namespace PottaAPI.Controllers
+namespace PottaAPI.Controllers;
+
+[ApiController]
+[Route("api/restaurant-operations")]
+[Produces("application/json")]
+public class RestaurantOperationsController : ControllerBase
 {
-    /// <summary>
-    /// Restaurant floor operations: notes, server transfers, shift handovers, table moves,
-    /// print-bill requests, pay-entire-bill requests, kitchen refire, and order combining.
-    /// Most endpoints are triggered by mobile staff and polled/completed by the desktop app.
-    /// </summary>
-    [ApiController]
-    [Route("api/restaurant-operations")]
-    [Produces("application/json")]
-    public class RestaurantOperationsController : ControllerBase
+    private readonly IOrderOperationsService _orderOps;
+    private readonly IBillRequestService _billRequests;
+    private readonly IOrderTaxService _orderTax;
+    private readonly ILogger<RestaurantOperationsController> _logger;
+
+    public RestaurantOperationsController(
+        IOrderOperationsService orderOps,
+        IBillRequestService billRequests,
+        IOrderTaxService orderTax,
+        ILogger<RestaurantOperationsController> logger)
     {
-        private readonly IRestaurantOperationsService _restaurantOperationsService;
-        private readonly ILogger<RestaurantOperationsController> _logger;
+        _orderOps = orderOps;
+        _billRequests = billRequests;
+        _orderTax = orderTax;
+        _logger = logger;
+    }
 
-        public RestaurantOperationsController(
-            IRestaurantOperationsService restaurantOperationsService,
-            ILogger<RestaurantOperationsController> logger)
+    // ── Order Operations ──
+
+    /// <summary>
+    /// Add notes to an order/transaction
+    /// </summary>
+    [HttpPost("add-notes")]
+    public async Task<ActionResult<AddNotesResponse>> AddNotes([FromBody] AddNotesRequest request)
+        => await HandleAsync(() => _orderOps.AddNotesAsync(request), request.TransactionId);
+
+    /// <summary>
+    /// Transfer an order to a different server/staff
+    /// </summary>
+    [HttpPost("transfer-server")]
+    public async Task<ActionResult<TransferServerResponse>> TransferServer([FromBody] TransferServerRequest request)
+        => await HandleAsync(() => _orderOps.TransferServerAsync(request), request.TransactionId);
+
+    /// <summary>
+    /// Transfer all orders from one staff to another (shift handover)
+    /// </summary>
+    [HttpPost("shift-handover")]
+    public async Task<ActionResult<ShiftHandoverResponse>> ShiftHandover([FromBody] ShiftHandoverRequest request)
+        => await HandleAsync(() => _orderOps.ShiftHandoverAsync(request));
+
+    /// <summary>
+    /// Move an order from one table to another
+    /// </summary>
+    [HttpPost("move-order")]
+    public async Task<ActionResult<MoveOrderResponse>> MoveOrder([FromBody] MoveOrderRequest request)
+        => await HandleAsync(() => _orderOps.MoveOrderAsync(request), request.TransactionId);
+
+    /// <summary>
+    /// Mark an order as refired to the kitchen (re-sends it for preparation)
+    /// </summary>
+    [HttpPost("refire-to-kitchen")]
+    public async Task<ActionResult<RefireToKitchenResponse>> RefireToKitchen([FromBody] RefireToKitchenRequest request)
+        => await HandleAsync(() => _orderOps.RefireToKitchenAsync(request), request.TransactionId);
+
+    /// <summary>Combine two or more waiting transactions into a single order.</summary>
+    [HttpPost("combine-orders")]
+    public async Task<ActionResult<CombineOrdersResponse>> CombineOrders([FromBody] CombineOrdersRequest request)
+        => await HandleAsync(() => _orderOps.CombineOrdersAsync(request));
+
+    /// <summary>
+    /// Create a print-bill request so the desktop app prints the bill for a transaction
+    /// </summary>
+    [HttpPost("print-bill")]
+    public async Task<IActionResult> CreatePrintBillRequest([FromBody] PrintBillRequest request)
+    {
+        try
         {
-            _restaurantOperationsService = restaurantOperationsService;
-            _logger = logger;
+            var response = await _billRequests.CreatePrintBillAsync(request);
+            return CreatedAtAction(nameof(GetPendingPrintBillRequests), new { id = response.RequestId }, response);
         }
+        catch (KeyNotFoundException ex) { return NotFound(new ErrorResponseDto { Error = "Not found", Details = ex.Message }); }
+        catch (InvalidOperationException ex) { return BadRequest(new ErrorResponseDto { Error = "Invalid operation", Details = ex.Message }); }
+    }
 
-        /// <summary>
-        /// Add notes to an order/transaction
-        /// </summary>
-        /// <response code="200">Note added successfully</response>
-        /// <response code="400">Invalid request</response>
-        /// <response code="404">Transaction not found</response>
-        /// <response code="500">Internal server error</response>
-        /// <remarks>
-        /// Sample request:
-        ///     POST /api/restaurant-operations/add-notes
-        ///     {
-        ///       "transactionId": "M20260219143022",
-        ///       "noteText": "No onions, extra sauce",
-        ///       "addedByStaffId": 1
-        ///     }
-        /// Notes are appended to existing notes with line breaks.
-        /// </remarks>
-        [HttpPost("add-notes")]
-        [ProducesResponseType(typeof(AddNotesResponse), StatusCodes.Status200OK)]
-        [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status400BadRequest)]
-        [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status404NotFound)]
-        [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status500InternalServerError)]
-        public async Task<ActionResult<AddNotesResponse>> AddNotes([FromBody] AddNotesRequest request)
+    /// <summary>
+    /// Get all pending print-bill requests (desktop polls this to know what to print)
+    /// </summary>
+    [HttpGet("print-bill/pending")]
+    public async Task<ActionResult<List<PrintBillRequestDTO>>> GetPendingPrintBillRequests()
+        => Ok(await _billRequests.GetPendingPrintBillsAsync());
+
+    /// <summary>
+    /// Mark a print-bill request as completed after the desktop has printed it
+    /// </summary>
+    [HttpPut("print-bill/{requestId}/complete")]
+    public async Task<IActionResult> CompletePrintBillRequest(string requestId, [FromBody] CompletePrintBillRequest request)
+        => await _billRequests.CompletePrintBillAsync(requestId, request.CompletedBy)
+            ? Ok(new { message = "Completed" })
+            : NotFound(new ErrorResponseDto { Error = "Not found", Details = $"Request {requestId} not found or already completed" });
+
+    /// <summary>
+    /// Cancel a pending print-bill request (e.g. customer changed their mind)
+    /// </summary>
+    [HttpDelete("print-bill/{requestId}")]
+    public async Task<IActionResult> CancelPrintBillRequest(string requestId)
+        => await _billRequests.CancelPrintBillAsync(requestId)
+            ? Ok(new { message = "Cancelled" })
+            : NotFound(new ErrorResponseDto { Error = "Not found", Details = $"Request {requestId} not found or already processed" });
+
+    /// <summary>
+    /// Create print-bill requests for every open order on a table at once
+    /// </summary>
+    [HttpPost("print-bill-by-table")]
+    public async Task<IActionResult> CreatePrintBillByTableRequest([FromBody] PrintBillByTableRequest request)
+    {
+        try { return Ok(await _billRequests.CreatePrintBillByTableAsync(request)); }
+        catch (KeyNotFoundException ex) { return NotFound(new ErrorResponseDto { Error = "Not found", Details = ex.Message }); }
+        catch (InvalidOperationException ex) { return BadRequest(new ErrorResponseDto { Error = "Invalid operation", Details = ex.Message }); }
+    }
+
+    /// <summary>
+    /// Mobile staff requests the desktop to collect full payment for a transaction
+    /// </summary>
+    [HttpPost("pay-entire-bill")]
+    public async Task<IActionResult> CreatePayEntireBillRequest([FromBody] PayEntireBillRequest request)
+    {
+        try
         {
-            try
-            {
-                _logger.LogInformation("Adding notes to transaction {TransactionId}", request.TransactionId);
-                
-                var response = await _restaurantOperationsService.AddNotesAsync(request);
-                
-                _logger.LogInformation("Notes added successfully to transaction {TransactionId}", request.TransactionId);
-                
-                return Ok(response);
-            }
-            catch (KeyNotFoundException ex)
-            {
-                _logger.LogWarning(ex, "Transaction not found: {TransactionId}", request.TransactionId);
-                return NotFound(new ErrorResponseDto
-                {
-                    Error = "Transaction not found",
-                    Details = ex.Message
-                });
-            }
-            catch (ArgumentException ex)
-            {
-                _logger.LogWarning(ex, "Invalid request for transaction {TransactionId}", request.TransactionId);
-                return BadRequest(new ErrorResponseDto
-                {
-                    Error = "Invalid request",
-                    Details = ex.Message
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error adding notes to transaction {TransactionId}", request.TransactionId);
-                return StatusCode(500, new ErrorResponseDto
-                {
-                    Error = "Internal server error",
-                    Details = "An error occurred while adding notes"
-                });
-            }
+            var response = await _billRequests.CreatePayEntireBillAsync(request);
+            return CreatedAtAction(nameof(GetPendingPayEntireBillRequests), new { id = response.RequestId }, response);
         }
+        catch (InvalidOperationException ex) { return BadRequest(new ErrorResponseDto { Error = "Invalid operation", Details = ex.Message }); }
+    }
 
-        /// <summary>
-        /// Transfer an order to a different server/staff
-        /// </summary>
-        /// <response code="200">Server transferred successfully</response>
-        /// <response code="400">Invalid request</response>
-        /// <response code="404">Transaction or staff not found</response>
-        /// <response code="500">Internal server error</response>
-        /// <remarks>
-        /// Sample request:
-        ///     POST /api/restaurant-operations/transfer-server
-        ///     {
-        ///       "transactionId": "M20260219143022",
-        ///       "newStaffId": 5,
-        ///       "reason": "Shift change"
-        ///     }
-        /// This updates both the transaction StaffId and all cart items' StaffId.
-        /// Useful for shift changes or server rotation.
-        /// </remarks>
-        [HttpPost("transfer-server")]
-        [ProducesResponseType(typeof(TransferServerResponse), StatusCodes.Status200OK)]
-        [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status400BadRequest)]
-        [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status404NotFound)]
-        [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status500InternalServerError)]
-        public async Task<ActionResult<TransferServerResponse>> TransferServer([FromBody] TransferServerRequest request)
+    /// <summary>Get all pending pay-entire-bill requests (desktop polls this).</summary>
+    [HttpGet("pay-entire-bill/pending")]
+    public async Task<IActionResult> GetPendingPayEntireBillRequests()
+        => Ok(await _billRequests.GetPendingPayBillsAsync());
+
+    /// <summary>Mark a pay-entire-bill request as completed after the desktop has processed payment.</summary>
+    [HttpPut("pay-entire-bill/{requestId}/complete")]
+    public async Task<IActionResult> CompletePayEntireBillRequest(string requestId, [FromBody] CompletePayEntireBillRequest request)
+        => await _billRequests.CompletePayBillAsync(requestId, request.CompletedBy)
+            ? Ok(new { message = "Completed" })
+            : NotFound(new ErrorResponseDto { Error = "Not found", Details = $"Request {requestId} not found or already processed" });
+
+    /// <summary>Cancel a pending pay-entire-bill request.</summary>
+    [HttpDelete("pay-entire-bill/{requestId}")]
+    public async Task<IActionResult> CancelPayEntireBillRequest(string requestId)
+        => await _billRequests.CancelPayBillAsync(requestId)
+            ? Ok(new { message = "Cancelled" })
+            : NotFound(new ErrorResponseDto { Error = "Not found", Details = $"Request {requestId} not found or already processed" });
+
+    /// <summary>
+    /// Remove taxes from an order
+    /// </summary>
+    [HttpPost("remove-taxes-and-fees")]
+    public async Task<ActionResult<RemoveTaxesAndFeesResponse>> RemoveTaxesAndFees([FromBody] RemoveTaxesAndFeesRequest request)
+        => await HandleAsync(() => _orderTax.RemoveTaxesAndFeesAsync(request), request.TransactionId);
+
+    // ── Helper ──
+    private async Task<ActionResult<T>> HandleAsync<T>(Func<Task<T>> action, string? logId = null)
+    {
+        try
         {
-            try
-            {
-                _logger.LogInformation("Transferring server for transaction {TransactionId} to staff {NewStaffId}", 
-                    request.TransactionId, request.NewStaffId);
-                
-                var response = await _restaurantOperationsService.TransferServerAsync(request);
-                
-                _logger.LogInformation("Server transferred successfully for transaction {TransactionId}", 
-                    request.TransactionId);
-                
-                return Ok(response);
-            }
-            catch (KeyNotFoundException ex)
-            {
-                _logger.LogWarning(ex, "Resource not found for transaction {TransactionId}", request.TransactionId);
-                return NotFound(new ErrorResponseDto
-                {
-                    Error = "Resource not found",
-                    Details = ex.Message
-                });
-            }
-            catch (InvalidOperationException ex)
-            {
-                _logger.LogWarning(ex, "Invalid operation for transaction {TransactionId}", request.TransactionId);
-                return BadRequest(new ErrorResponseDto
-                {
-                    Error = "Invalid operation",
-                    Details = ex.Message
-                });
-            }
-            catch (ArgumentException ex)
-            {
-                _logger.LogWarning(ex, "Invalid request for transaction {TransactionId}", request.TransactionId);
-                return BadRequest(new ErrorResponseDto
-                {
-                    Error = "Invalid request",
-                    Details = ex.Message
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error transferring server for transaction {TransactionId}", request.TransactionId);
-                return StatusCode(500, new ErrorResponseDto
-                {
-                    Error = "Internal server error",
-                    Details = "An error occurred while transferring server"
-                });
-            }
+            var result = await action();
+            return Ok(result);
         }
-
-        /// <summary>
-        /// Transfer all orders from one staff to another (shift handover)
-        /// </summary>
-        /// <response code="200">Shift handover completed successfully</response>
-        /// <response code="400">Invalid request</response>
-        /// <response code="404">Staff not found</response>
-        /// <response code="500">Internal server error</response>
-        /// <remarks>
-        /// Sample request:
-        ///     POST /api/restaurant-operations/shift-handover
-        ///     {
-        ///       "currentStaffId": 3,
-        ///       "newStaffId": 5,
-        ///       "reason": "End of shift"
-        ///     }
-        /// This transfers ALL pending orders from the current staff to the new staff.
-        /// Useful for shift changes where all orders need to be handed over.
-        /// After calling this endpoint, the desktop app should log out the current staff.
-        /// </remarks>
-        [HttpPost("shift-handover")]
-        [ProducesResponseType(typeof(ShiftHandoverResponse), StatusCodes.Status200OK)]
-        [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status400BadRequest)]
-        [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status404NotFound)]
-        [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status500InternalServerError)]
-        public async Task<ActionResult<ShiftHandoverResponse>> ShiftHandover([FromBody] ShiftHandoverRequest request)
+        catch (KeyNotFoundException ex)
         {
-            try
-            {
-                _logger.LogInformation("Shift handover: transferring all orders from staff {CurrentStaffId} to staff {NewStaffId}", 
-                    request.CurrentStaffId, request.NewStaffId);
-                
-                var response = await _restaurantOperationsService.ShiftHandoverAsync(request);
-                
-                _logger.LogInformation("Shift handover completed: {OrdersTransferred} orders transferred", 
-                    response.OrdersTransferred);
-                
-                return Ok(response);
-            }
-            catch (KeyNotFoundException ex)
-            {
-                _logger.LogWarning(ex, "Staff not found during shift handover");
-                return NotFound(new ErrorResponseDto
-                {
-                    Error = "Resource not found",
-                    Details = ex.Message
-                });
-            }
-            catch (InvalidOperationException ex)
-            {
-                _logger.LogWarning(ex, "Invalid operation during shift handover");
-                return BadRequest(new ErrorResponseDto
-                {
-                    Error = "Invalid operation",
-                    Details = ex.Message
-                });
-            }
-            catch (ArgumentException ex)
-            {
-                _logger.LogWarning(ex, "Invalid request for shift handover");
-                return BadRequest(new ErrorResponseDto
-                {
-                    Error = "Invalid request",
-                    Details = ex.Message
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error during shift handover");
-                return StatusCode(500, new ErrorResponseDto
-                {
-                    Error = "Internal server error",
-                    Details = "An error occurred during shift handover"
-                });
-            }
+            _logger.LogWarning(ex, "Not found: {Id}", logId);
+            return NotFound(new ErrorResponseDto { Error = "Not found", Details = ex.Message });
         }
-
-        /// <summary>
-        /// Move an order from one table to another
-        /// </summary>
-        /// <response code="200">Order moved successfully</response>
-        /// <response code="400">Invalid request</response>
-        /// <response code="404">Transaction or table not found</response>
-        /// <response code="500">Internal server error</response>
-        /// <remarks>
-        /// Sample request:
-        ///     POST /api/restaurant-operations/move-order
-        ///     {
-        ///       "transactionId": "M20260219143022",
-        ///       "targetTableId": "TBL005",
-        ///       "reason": "Customer requested different table"
-        ///     }
-        /// This moves an order from its current table to a new table.
-        /// Updates both the transaction and table statuses.
-        /// Source table becomes available, target table becomes occupied.
-        /// </remarks>
-        [HttpPost("move-order")]
-        [ProducesResponseType(typeof(MoveOrderResponse), StatusCodes.Status200OK)]
-        [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status400BadRequest)]
-        [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status404NotFound)]
-        [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status500InternalServerError)]
-        public async Task<ActionResult<MoveOrderResponse>> MoveOrder([FromBody] MoveOrderRequest request)
+        catch (InvalidOperationException ex)
         {
-            try
-            {
-                _logger.LogInformation("Moving order {TransactionId} to table {TargetTableId}", 
-                    request.TransactionId, request.TargetTableId);
-                
-                var response = await _restaurantOperationsService.MoveOrderAsync(request);
-                
-                _logger.LogInformation("Order moved successfully: {TransactionId} to {ToTableName}", 
-                    request.TransactionId, response.ToTableName);
-                
-                return Ok(response);
-            }
-            catch (KeyNotFoundException ex)
-            {
-                _logger.LogWarning(ex, "Resource not found while moving order");
-                return NotFound(new ErrorResponseDto
-                {
-                    Error = "Resource not found",
-                    Details = ex.Message
-                });
-            }
-            catch (InvalidOperationException ex)
-            {
-                _logger.LogWarning(ex, "Invalid operation while moving order");
-                return BadRequest(new ErrorResponseDto
-                {
-                    Error = "Invalid operation",
-                    Details = ex.Message
-                });
-            }
-            catch (ArgumentException ex)
-            {
-                _logger.LogWarning(ex, "Invalid request for moving order");
-                return BadRequest(new ErrorResponseDto
-                {
-                    Error = "Invalid request",
-                    Details = ex.Message
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error moving order");
-                return StatusCode(500, new ErrorResponseDto
-                {
-                    Error = "Internal server error",
-                    Details = "An error occurred while moving order"
-                });
-            }
+            _logger.LogWarning(ex, "Invalid operation: {Id}", logId);
+            return BadRequest(new ErrorResponseDto { Error = "Invalid operation", Details = ex.Message });
         }
-
-        /// <summary>Create a print-bill request so the desktop app prints the bill for a transaction.</summary>
-        /// <remarks>
-        /// Mobile staff tap "Print Bill" → this creates a pending request → desktop polls
-        /// <c>GET /api/restaurant-operations/print-bill/pending</c> and prints automatically.
-        ///
-        /// Sample request:
-        ///
-        ///     POST /api/restaurant-operations/print-bill
-        ///     { "transactionId": "M20260219143022", "requestedByStaffId": 3 }
-        /// </remarks>
-        /// <response code="201">Request created — desktop will process it shortly</response>
-        /// <response code="400">Invalid request or transaction already has a pending print request</response>
-        /// <response code="404">Transaction not found</response>
-        [HttpPost("print-bill")]
-        [ProducesResponseType(typeof(PrintBillResponse), StatusCodes.Status201Created)]
-        [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status400BadRequest)]
-        [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status404NotFound)]
-        public async Task<ActionResult<PrintBillResponse>> CreatePrintBillRequest([FromBody] PrintBillRequest request)
+        catch (ArgumentException ex)
         {
-            try
-            {
-                var response = await _restaurantOperationsService.CreatePrintBillRequestAsync(request);
-                return CreatedAtAction(nameof(CreatePrintBillRequest), new { id = response.RequestId }, response);
-            }
-            catch (KeyNotFoundException ex)
-            {
-                return NotFound(new ErrorResponseDto
-                {
-                    Error = "Resource not found",
-                    Details = ex.Message
-                });
-            }
-            catch (InvalidOperationException ex)
-            {
-                return BadRequest(new ErrorResponseDto
-                {
-                    Error = "Invalid operation",
-                    Details = ex.Message
-                });
-            }
+            _logger.LogWarning(ex, "Invalid argument: {Id}", logId);
+            return BadRequest(new ErrorResponseDto { Error = "Invalid request", Details = ex.Message });
         }
-
-        /// <summary>Get all pending print-bill requests (desktop polls this to know what to print).</summary>
-        /// <remarks>Desktop app should poll this every few seconds and print each pending request, then call the complete endpoint.</remarks>
-        /// <response code="200">List of pending print requests</response>
-        [HttpGet("print-bill/pending")]
-        [ProducesResponseType(typeof(List<PrintBillRequestDTO>), StatusCodes.Status200OK)]
-        public async Task<ActionResult<List<PrintBillRequestDTO>>> GetPendingPrintBillRequests()
+        catch (Exception ex)
         {
-            try
-            {
-                var requests = await _restaurantOperationsService.GetPendingPrintBillRequestsAsync();
-                return Ok(requests);
-            }
-            catch (InvalidOperationException ex)
-            {
-                return BadRequest(new ErrorResponseDto
-                {
-                    Error = "Invalid operation",
-                    Details = ex.Message
-                });
-            }
+            _logger.LogError(ex, "Error processing request: {Id}", logId);
+            return StatusCode(500, new ErrorResponseDto { Error = "Internal server error", Details = "An error occurred" });
         }
-
-        /// <summary>Mark a print-bill request as completed after the desktop has printed it.</summary>
-        /// <param name="requestId">The print request ID returned when the request was created</param>
-        /// <response code="200">Request marked as completed</response>
-        /// <response code="404">Request not found or already completed</response>
-        [HttpPut("print-bill/{requestId}/complete")]
-        [ProducesResponseType(StatusCodes.Status200OK)]
-        [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status404NotFound)]
-        public async Task<IActionResult> CompletePrintBillRequest(string requestId, [FromBody] CompletePrintBillRequest request)
-        {
-            try
-            {
-                var success = await _restaurantOperationsService.CompletePrintBillRequestAsync(requestId, request.CompletedBy);
-                
-                if (success)
-                {
-                    return Ok(new { message = "Print bill request completed successfully" });
-                }
-                else
-                {
-                    return NotFound(new ErrorResponseDto
-                    {
-                        Error = "Resource not found",
-                        Details = $"Print bill request {requestId} not found or already completed"
-                    });
-                }
-            }
-            catch (InvalidOperationException ex)
-            {
-                return BadRequest(new ErrorResponseDto
-                {
-                    Error = "Invalid operation",
-                    Details = ex.Message
-                });
-            }
-        }
-
-        /// <summary>Cancel a pending print-bill request (e.g. customer changed their mind).</summary>
-        /// <param name="requestId">The print request ID to cancel</param>
-        /// <response code="200">Request cancelled</response>
-        /// <response code="404">Request not found or already processed</response>
-        [HttpDelete("print-bill/{requestId}")]
-        [ProducesResponseType(StatusCodes.Status200OK)]
-        [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status404NotFound)]
-        public async Task<IActionResult> CancelPrintBillRequest(string requestId)
-        {
-            try
-            {
-                var success = await _restaurantOperationsService.CancelPrintBillRequestAsync(requestId);
-                
-                if (success)
-                {
-                    return Ok(new { message = "Print bill request cancelled successfully" });
-                }
-                else
-                {
-                    return NotFound(new ErrorResponseDto
-                    {
-                        Error = "Resource not found",
-                        Details = $"Print bill request {requestId} not found or already processed"
-                    });
-                }
-            }
-            catch (InvalidOperationException ex)
-            {
-                return BadRequest(new ErrorResponseDto
-                {
-                    Error = "Invalid operation",
-                    Details = ex.Message
-                });
-            }
-        }
-
-        /// <summary>Create print-bill requests for every open order on a table at once.</summary>
-        /// <remarks>
-        /// Useful when a table has multiple open orders (e.g. split orders per seat).
-        /// The desktop receives all requests via polling and shows a single combined print dialog.
-        ///
-        /// Sample request:
-        ///
-        ///     POST /api/restaurant-operations/print-bill-by-table
-        ///     { "tableId": "TBL-001", "requestedByStaffId": 3 }
-        /// </remarks>
-        /// <response code="200">Requests created for all open orders on the table</response>
-        /// <response code="400">Invalid request</response>
-        /// <response code="404">Table not found or no open orders</response>
-        [HttpPost("print-bill-by-table")]
-        [ProducesResponseType(typeof(PrintBillByTableResponse), StatusCodes.Status200OK)]
-        [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status400BadRequest)]
-        [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status404NotFound)]
-        public async Task<IActionResult> CreatePrintBillByTableRequest([FromBody] PrintBillByTableRequest request)
-        {
-            try
-            {
-                var response = await _restaurantOperationsService.CreatePrintBillByTableRequestAsync(request);
-                return Ok(response);
-            }
-            catch (KeyNotFoundException ex)
-            {
-                return NotFound(new ErrorResponseDto
-                {
-                    Error = "Resource not found",
-                    Details = ex.Message
-                });
-            }
-            catch (InvalidOperationException ex)
-            {
-                return BadRequest(new ErrorResponseDto
-                {
-                    Error = "Invalid operation",
-                    Details = ex.Message
-                });
-            }
-        }
-
-        #region Pay Entire Bill Endpoints
-
-        /// <summary>Mobile staff requests the desktop to collect full payment for a transaction.</summary>
-        /// <remarks>
-        /// Mobile staff tap "Pay Entire Bill" → request is created → desktop polls
-        /// <c>GET /api/restaurant-operations/pay-entire-bill/pending</c>, opens the payment dialog, and completes it.
-        ///
-        /// Sample request:
-        ///
-        ///     POST /api/restaurant-operations/pay-entire-bill
-        ///     { "transactionId": "M20260219143022", "requestedByStaffId": 3, "paymentMethod": "Cash" }
-        /// </remarks>
-        /// <response code="201">Pay-entire-bill request created</response>
-        /// <response code="400">Invalid request</response>
-        [HttpPost("pay-entire-bill")]
-        [ProducesResponseType(typeof(PayEntireBillResponse), StatusCodes.Status201Created)]
-        [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status400BadRequest)]
-        public async Task<IActionResult> CreatePayEntireBillRequest([FromBody] PayEntireBillRequest request)
-        {
-            try
-            {
-                var response = await _restaurantOperationsService.CreatePayEntireBillRequestAsync(request);
-                return CreatedAtAction(
-                    nameof(GetPendingPayEntireBillRequests),
-                    new { id = response.RequestId },
-                    response
-                );
-            }
-            catch (InvalidOperationException ex)
-            {
-                return BadRequest(new ErrorResponseDto
-                {
-                    Error = "Invalid operation",
-                    Details = ex.Message
-                });
-            }
-        }
-
-        /// <summary>Get all pending pay-entire-bill requests (desktop polls this).</summary>
-        /// <response code="200">List of pending pay-entire-bill requests</response>
-        [HttpGet("pay-entire-bill/pending")]
-        [ProducesResponseType(typeof(List<PayEntireBillRequestDTO>), StatusCodes.Status200OK)]
-        public async Task<IActionResult> GetPendingPayEntireBillRequests()
-        {
-            var requests = await _restaurantOperationsService.GetPendingPayEntireBillRequestsAsync();
-            return Ok(requests);
-        }
-
-        /// <summary>Mark a pay-entire-bill request as completed after the desktop has processed payment.</summary>
-        /// <param name="requestId">The request ID to complete</param>
-        /// <response code="200">Request marked as completed</response>
-        /// <response code="404">Request not found or already processed</response>
-        [HttpPut("pay-entire-bill/{requestId}/complete")]
-        [ProducesResponseType(StatusCodes.Status200OK)]
-        [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status404NotFound)]
-        public async Task<IActionResult> CompletePayEntireBillRequest(
-            string requestId,
-            [FromBody] CompletePayEntireBillRequest request)
-        {
-            try
-            {
-                var success = await _restaurantOperationsService.CompletePayEntireBillRequestAsync(
-                    requestId,
-                    request.CompletedBy
-                );
-                
-                if (success)
-                {
-                    return Ok(new { message = "Pay entire bill request completed successfully" });
-                }
-                else
-                {
-                    return NotFound(new ErrorResponseDto
-                    {
-                        Error = "Resource not found",
-                        Details = $"Pay entire bill request {requestId} not found or already processed"
-                    });
-                }
-            }
-            catch (InvalidOperationException ex)
-            {
-                return BadRequest(new ErrorResponseDto
-                {
-                    Error = "Invalid operation",
-                    Details = ex.Message
-                });
-            }
-        }
-
-        /// <summary>Cancel a pending pay-entire-bill request.</summary>
-        /// <param name="requestId">The request ID to cancel</param>
-        /// <response code="200">Request cancelled</response>
-        /// <response code="404">Request not found or already processed</response>
-        [HttpDelete("pay-entire-bill/{requestId}")]
-        [ProducesResponseType(StatusCodes.Status200OK)]
-        [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status404NotFound)]
-        public async Task<IActionResult> CancelPayEntireBillRequest(string requestId)
-        {
-            try
-            {
-                var success = await _restaurantOperationsService.CancelPayEntireBillRequestAsync(requestId);
-                
-                if (success)
-                {
-                    return Ok(new { message = "Pay entire bill request cancelled successfully" });
-                }
-                else
-                {
-                    return NotFound(new ErrorResponseDto
-                    {
-                        Error = "Resource not found",
-                        Details = $"Pay entire bill request {requestId} not found or already processed"
-                    });
-                }
-            }
-            catch (InvalidOperationException ex)
-            {
-                return BadRequest(new ErrorResponseDto
-                {
-                    Error = "Invalid operation",
-                    Details = ex.Message
-                });
-            }
-        }
-
-        #endregion
-
-        #region Refire To Kitchen Operations
-
-        /// <summary>Mark an order as refired to the kitchen (re-sends it for preparation).</summary>
-        /// <remarks>
-        /// Updates the <c>WaitingTransaction</c> status to indicate the order was refired.
-        /// Use this when a kitchen display needs to re-show an order that was accidentally dismissed.
-        ///
-        /// Sample request:
-        ///
-        ///     POST /api/restaurant-operations/refire-to-kitchen
-        ///     { "transactionId": "M20260219143022", "staffId": 3 }
-        /// </remarks>
-        /// <response code="200">Order marked as refired</response>
-        /// <response code="400">Invalid request</response>
-        /// <response code="404">Transaction not found</response>
-        /// <response code="500">Database error</response>
-        [HttpPost("refire-to-kitchen")]
-        [ProducesResponseType(typeof(RefireToKitchenResponse), StatusCodes.Status200OK)]
-        [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status400BadRequest)]
-        [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status404NotFound)]
-        [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status500InternalServerError)]
-        public async Task<ActionResult<RefireToKitchenResponse>> RefireToKitchen([FromBody] RefireToKitchenRequest request)
-        {
-            try
-            {
-                _logger.LogInformation("Marking order as refired: {TransactionId} by staff {StaffId}", 
-                    request.TransactionId, request.StaffId);
-                
-                var response = await _restaurantOperationsService.RefireToKitchenAsync(request);
-                
-                _logger.LogInformation("Order marked as refired successfully: {TransactionId} ({ItemsRefired} items)", 
-                    request.TransactionId, response.ItemsRefired);
-                
-                return Ok(response);
-            }
-            catch (KeyNotFoundException ex)
-            {
-                _logger.LogWarning(ex, "Resource not found for refire request: {TransactionId}", request.TransactionId);
-                return NotFound(new ErrorResponseDto
-                {
-                    Error = "Resource not found",
-                    Details = ex.Message
-                });
-            }
-            catch (InvalidOperationException ex)
-            {
-                _logger.LogWarning(ex, "Invalid operation for refire request: {TransactionId}", request.TransactionId);
-                return BadRequest(new ErrorResponseDto
-                {
-                    Error = "Invalid operation",
-                    Details = ex.Message
-                });
-            }
-            catch (ArgumentException ex)
-            {
-                _logger.LogWarning(ex, "Invalid request for refire: {TransactionId}", request.TransactionId);
-                return BadRequest(new ErrorResponseDto
-                {
-                    Error = "Invalid request",
-                    Details = ex.Message
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error marking order as refired: {TransactionId}", request.TransactionId);
-                return StatusCode(500, new ErrorResponseDto
-                {
-                    Error = "Internal server error",
-                    Details = "An error occurred while marking order as refired"
-                });
-            }
-        }
-
-        #endregion
-
-        #region Combine Orders Operations
-
-        /// <summary>Combine two or more waiting transactions into a single order.</summary>
-        /// <remarks>
-        /// Sample request:
-        ///     POST /api/restaurant-operations/combine-orders
-        ///     {
-        ///       "transactionIds": ["M20260221001", "M20260221002", "M20260221003"],
-        ///       "targetTableId": "TBL-001",
-        ///       "targetStaffId": 5,
-        ///       "notes": "Combined for birthday party"
-        ///     }
-        /// This endpoint:
-        /// - Combines 2+ waiting transactions into one
-        /// - Merges duplicate items (same product, modifiers, price)
-        /// - Sums quantities for merged items
-        /// - Preserves items that can't be merged (different modifiers/prices)
-        /// - Assigns combined order to target table and staff
-        /// - Deletes original transactions after successful combination
-        /// - Operation is atomic (all or nothing)
-        /// Orders can be combined from SAME table OR DIFFERENT tables.
-        /// </remarks>
-        [HttpPost("combine-orders")]
-        [ProducesResponseType(typeof(CombineOrdersResponse), StatusCodes.Status200OK)]
-        [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status400BadRequest)]
-        [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status404NotFound)]
-        [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status500InternalServerError)]
-        public async Task<ActionResult<CombineOrdersResponse>> CombineOrders([FromBody] CombineOrdersRequest request)
-        {
-            try
-            {
-                _logger.LogInformation("Combining {Count} orders to table {TargetTableId}", 
-                    request.TransactionIds.Count, request.TargetTableId);
-                
-                var response = await _restaurantOperationsService.CombineOrdersAsync(request);
-                
-                _logger.LogInformation("Orders combined successfully: {NewTransactionId} (merged {MergedItemsCount} items)", 
-                    response.NewTransactionId, response.MergedItemsCount);
-                
-                return Ok(response);
-            }
-            catch (KeyNotFoundException ex)
-            {
-                _logger.LogWarning(ex, "Resource not found for combine orders request");
-                return NotFound(new ErrorResponseDto
-                {
-                    Error = "Resource not found",
-                    Details = ex.Message
-                });
-            }
-            catch (InvalidOperationException ex)
-            {
-                _logger.LogWarning(ex, "Invalid operation for combine orders request");
-                return BadRequest(new ErrorResponseDto
-                {
-                    Error = "Invalid operation",
-                    Details = ex.Message
-                });
-            }
-            catch (ArgumentException ex)
-            {
-                _logger.LogWarning(ex, "Invalid request for combine orders");
-                return BadRequest(new ErrorResponseDto
-                {
-                    Error = "Invalid request",
-                    Details = ex.Message
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error combining orders");
-                return StatusCode(500, new ErrorResponseDto
-                {
-                    Error = "Internal server error",
-                    Details = "An error occurred while combining orders"
-                });
-            }
-        }
-
-        #endregion
-
-        #region Remove Taxes and Fees
-
-        /// <summary>
-        /// Remove taxes and fees from an order
-        /// </summary>
-        /// <response code="200">Taxes and fees removed successfully</response>
-        /// <response code="400">Invalid request</response>
-        /// <response code="404">Transaction not found</response>
-        /// <response code="500">Internal server error</response>
-        /// <remarks>
-        /// Sample request:
-        ///     POST /api/restaurant-operations/remove-taxes-and-fees
-        ///     {
-        ///       "transactionId": "M20260221001",
-        ///       "staffId": 5,
-        ///       "reason": "Tax-exempt organization"
-        ///     }
-        /// This endpoint removes all taxes and fees from the order, setting the tax amount to 0.
-        /// The operation is logged in the audit trail for compliance.
-        /// </remarks>
-        [HttpPost("remove-taxes-and-fees")]
-        [ProducesResponseType(typeof(RemoveTaxesAndFeesResponse), StatusCodes.Status200OK)]
-        [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status400BadRequest)]
-        [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status404NotFound)]
-        [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status500InternalServerError)]
-        public async Task<ActionResult<RemoveTaxesAndFeesResponse>> RemoveTaxesAndFees([FromBody] RemoveTaxesAndFeesRequest request)
-        {
-            try
-            {
-                _logger.LogInformation("Removing taxes and fees for transaction {TransactionId}", request.TransactionId);
-                
-                var response = await _restaurantOperationsService.RemoveTaxesAndFeesAsync(request);
-                
-                _logger.LogInformation("Taxes and fees removed successfully for transaction {TransactionId}", request.TransactionId);
-                
-                return Ok(response);
-            }
-            catch (KeyNotFoundException ex)
-            {
-                _logger.LogWarning(ex, "Transaction not found: {TransactionId}", request.TransactionId);
-                return NotFound(new ErrorResponseDto
-                {
-                    Error = "Transaction not found",
-                    Details = ex.Message
-                });
-            }
-            catch (ArgumentException ex)
-            {
-                _logger.LogWarning(ex, "Invalid request for remove taxes and fees: {TransactionId}", request.TransactionId);
-                return BadRequest(new ErrorResponseDto
-                {
-                    Error = "Invalid request",
-                    Details = ex.Message
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error removing taxes and fees for transaction {TransactionId}", request.TransactionId);
-                return StatusCode(500, new ErrorResponseDto
-                {
-                    Error = "Internal server error",
-                    Details = "An error occurred while removing taxes and fees"
-                });
-            }
-        }
-
-        #endregion
     }
 }

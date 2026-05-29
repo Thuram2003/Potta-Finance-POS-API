@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using PottaAPI.Models;
 using PottaAPI.Models.Common;
-using PottaAPI.Services;
+using PottaAPI.Services.Interfaces;
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;

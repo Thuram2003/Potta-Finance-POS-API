@@ -29,8 +29,10 @@ namespace PottaAPI.Configuration
 
         /// <summary>
         /// Base path to the desktop application's Images folder (relative to API executable)
+        /// NOTE: This is now optional and overridden by conditional compilation in Program.cs
+        /// The API automatically determines the correct path based on DEBUG/RELEASE mode
         /// </summary>
-        public string ImageBasePath { get; set; } = "../Potta Finance/Images";
+        public string ImageBasePath { get; set; } = "";
 
         /// <summary>
         /// Optional external/tunnel URL to use in QR codes instead of local IP.

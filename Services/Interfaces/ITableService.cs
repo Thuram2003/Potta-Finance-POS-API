@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using PottaAPI.Models;
 
-namespace PottaAPI.Services
+namespace PottaAPI.Services.Interfaces
 {
     // Table service interface for mobile operations
     public interface ITableService

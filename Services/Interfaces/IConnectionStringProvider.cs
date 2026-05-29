@@ -1,4 +1,4 @@
-namespace PottaAPI.Services
+namespace PottaAPI.Services.Interfaces
 {
     /// <summary>
     /// Interface for providing database connection string

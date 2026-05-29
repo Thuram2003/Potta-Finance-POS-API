@@ -1,5 +1,7 @@
+using Dapper;
 using Microsoft.Data.Sqlite;
 using PottaAPI.Models;
+using PottaAPI.Services.Interfaces;
 using System.Text.Json;
 
 namespace PottaAPI.Services
@@ -19,11 +21,9 @@ namespace PottaAPI.Services
             try
             {
                 using var connection = new SqliteConnection(_connectionString);
-                await connection.OpenAsync();
 
-                var command = connection.CreateCommand();
-                command.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table'";
-                var tableCount = await command.ExecuteScalarAsync();
+                var tableCount = await connection.ExecuteScalarAsync<int>(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table'");
 
                 Console.WriteLine($"Database connected successfully. Found {tableCount} tables.");
             }
@@ -37,39 +37,20 @@ namespace PottaAPI.Services
         public async Task<SyncInfoDto> GetLastSyncInfoAsync()
         {
             using var connection = new SqliteConnection(_connectionString);
-            await connection.OpenAsync();
 
-            var command = connection.CreateCommand();
-            command.CommandText = @"
-                SELECT 
-                    (SELECT COUNT(*) FROM Products WHERE status = 1) as ProductCount,
-                    (SELECT COUNT(*) FROM BundleItems WHERE status = 1) as BundleCount,
-                    (SELECT COUNT(*) FROM ProductVariations WHERE status = 1) as VariationCount,
-                    (SELECT COUNT(*) FROM Categories WHERE isActive = 1) as CategoryCount,
-                    (SELECT COUNT(*) FROM Tables WHERE isActive = 1) as TableCount,
-                    (SELECT COUNT(*) FROM Staff WHERE IsActive = 1) as StaffCount,
-                    (SELECT COUNT(*) FROM Customer WHERE isActive = 1) as CustomerCount,
-                    (SELECT COUNT(*) FROM WaitingTransactions) as WaitingTransactionCount,
-                    CURRENT_TIMESTAMP as LastSync";
+            var sql = @"
+        SELECT 
+            (SELECT COUNT(*) FROM Products WHERE status = 1) as ProductCount,
+            (SELECT COUNT(*) FROM BundleItems WHERE status = 1) as BundleCount,
+            (SELECT COUNT(*) FROM ProductVariations WHERE status = 1) as VariationCount,
+            (SELECT COUNT(*) FROM Categories WHERE isActive = 1) as CategoryCount,
+            (SELECT COUNT(*) FROM Tables WHERE isActive = 1) as TableCount,
+            (SELECT COUNT(*) FROM Staff WHERE IsActive = 1) as StaffCount,
+            (SELECT COUNT(*) FROM Customer WHERE isActive = 1) as CustomerCount,
+            (SELECT COUNT(*) FROM WaitingTransactions) as WaitingTransactionCount,
+            CURRENT_TIMESTAMP as LastSync";
 
-            using var reader = await command.ExecuteReaderAsync();
-            if (await reader.ReadAsync())
-            {
-                return new SyncInfoDto
-                {
-                    ProductCount = Convert.ToInt32(reader["ProductCount"] ?? 0),
-                    BundleCount = Convert.ToInt32(reader["BundleCount"] ?? 0),
-                    VariationCount = Convert.ToInt32(reader["VariationCount"] ?? 0),
-                    CategoryCount = Convert.ToInt32(reader["CategoryCount"] ?? 0),
-                    TableCount = Convert.ToInt32(reader["TableCount"] ?? 0),
-                    StaffCount = Convert.ToInt32(reader["StaffCount"] ?? 0),
-                    CustomerCount = Convert.ToInt32(reader["CustomerCount"] ?? 0),
-                    WaitingTransactionCount = Convert.ToInt32(reader["WaitingTransactionCount"] ?? 0),
-                    LastSync = DateTime.Parse(reader["LastSync"]?.ToString() ?? DateTime.Now.ToString())
-                };
-            }
-
-            return new SyncInfoDto();
+            return await connection.QueryFirstOrDefaultAsync < SyncInfoDto > (sql) ?? new SyncInfoDto();
         }
 
         public async Task<DetailedSyncInfoDto> GetDetailedSyncInfoAsync()
@@ -103,14 +84,12 @@ namespace PottaAPI.Services
         public async Task<DatabaseStatistics> GetDatabaseStatisticsAsync()
         {
             using var connection = new SqliteConnection(_connectionString);
-            await connection.OpenAsync();
+
+            var tableCount = await connection.ExecuteScalarAsync<int>(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table'");
 
             var dbPath = connection.DataSource;
             var fileInfo = new FileInfo(dbPath);
-
-            var command = connection.CreateCommand();
-            command.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table'";
-            var tableCount = Convert.ToInt32(await command.ExecuteScalarAsync() ?? 0);
 
             return new DatabaseStatistics
             {
@@ -126,68 +105,43 @@ namespace PottaAPI.Services
         public async Task<InventoryStatistics> GetInventoryStatisticsAsync()
         {
             using var connection = new SqliteConnection(_connectionString);
-            await connection.OpenAsync();
 
-            var command = connection.CreateCommand();
-            command.CommandText = @"
-                SELECT 
-                    COUNT(CASE WHEN inventoryOnHand <= 10 AND inventoryOnHand > 0 THEN 1 END) as LowStock,
-                    COUNT(CASE WHEN inventoryOnHand = 0 THEN 1 END) as OutOfStock,
-                    COALESCE(SUM(CASE WHEN status = 1 THEN cost * inventoryOnHand ELSE 0 END), 0) as TotalValue,
-                    COUNT(CASE WHEN taxable = 1 AND status = 1 THEN 1 END) as TaxableCount,
-                    COUNT(CASE WHEN taxable = 0 AND status = 1 THEN 1 END) as NonTaxableCount
-                FROM Products
-                WHERE status = 1";
+            var sql = @"
+        SELECT 
+            COUNT(CASE WHEN inventoryOnHand <= 10 AND inventoryOnHand > 0 THEN 1 END) as LowStockItems,
+            COUNT(CASE WHEN inventoryOnHand = 0 THEN 1 END) as OutOfStockItems,
+            COALESCE(SUM(CASE WHEN status = 1 THEN cost * inventoryOnHand ELSE 0 END), 0) as TotalInventoryValue,
+            COUNT(CASE WHEN taxable = 1 AND status = 1 THEN 1 END) as TaxableItems,
+            COUNT(CASE WHEN taxable = 0 AND status = 1 THEN 1 END) as NonTaxableItems
+        FROM Products
+        WHERE status = 1";
 
-            using var reader = await command.ExecuteReaderAsync();
-            if (await reader.ReadAsync())
-            {
-                return new InventoryStatistics
-                {
-                    LowStockItems = Convert.ToInt32(reader["LowStock"] ?? 0),
-                    OutOfStockItems = Convert.ToInt32(reader["OutOfStock"] ?? 0),
-                    TotalInventoryValue = Convert.ToDecimal(reader["TotalValue"] ?? 0),
-                    TaxableItems = Convert.ToInt32(reader["TaxableCount"] ?? 0),
-                    NonTaxableItems = Convert.ToInt32(reader["NonTaxableCount"] ?? 0)
-                };
-            }
-
-            return new InventoryStatistics();
+            // Dapper maps column aliases directly to property names
+            return await connection.QueryFirstOrDefaultAsync < InventoryStatistics > (sql) ?? new InventoryStatistics();
         }
 
         public async Task<TableStatistics> GetTableStatisticsAsync()
         {
             using var connection = new SqliteConnection(_connectionString);
-            await connection.OpenAsync();
 
-            var command = connection.CreateCommand();
-            command.CommandText = @"
-                SELECT 
-                    COUNT(CASE WHEN status = 'Available' THEN 1 END) as Available,
-                    COUNT(CASE WHEN status = 'Occupied' THEN 1 END) as Occupied,
-                    COUNT(CASE WHEN status = 'Reserved' THEN 1 END) as Reserved,
-                    COUNT(*) as Total
-                FROM Tables
-                WHERE isActive = 1";
+            var sql = @"
+        SELECT 
+            COUNT(CASE WHEN status = 'Available' THEN 1 END) as AvailableTables,
+            COUNT(CASE WHEN status = 'Occupied' THEN 1 END) as OccupiedTables,
+            COUNT(CASE WHEN status = 'Reserved' THEN 1 END) as ReservedTables,
+            COUNT(*) as TotalTables
+        FROM Tables
+        WHERE isActive = 1";
 
-            using var reader = await command.ExecuteReaderAsync();
-            if (await reader.ReadAsync())
+            var result = await connection.QueryFirstOrDefaultAsync < TableStatsRaw > (sql) ?? new TableStatsRaw();
+
+            return new TableStatistics
             {
-                var available = Convert.ToInt32(reader["Available"] ?? 0);
-                var occupied = Convert.ToInt32(reader["Occupied"] ?? 0);
-                var reserved = Convert.ToInt32(reader["Reserved"] ?? 0);
-                var total = Convert.ToInt32(reader["Total"] ?? 0);
-
-                return new TableStatistics
-                {
-                    AvailableTables = available,
-                    OccupiedTables = occupied,
-                    ReservedTables = reserved,
-                    OccupancyRate = total > 0 ? (double)occupied / total * 100 : 0
-                };
-            }
-
-            return new TableStatistics();
+                AvailableTables = result.AvailableTables,
+                OccupiedTables = result.OccupiedTables,
+                ReservedTables = result.ReservedTables,
+                OccupancyRate = result.TotalTables > 0 ? (double)result.OccupiedTables / result.TotalTables * 100 : 0
+            };
         }
 
         private async Task<DateTime?> GetOldestPendingTransactionDateAsync()
@@ -226,6 +180,14 @@ namespace PottaAPI.Services
         public string GetConnectionString()
         {
             return _connectionString;
+        }
+
+        private class TableStatsRaw
+        {
+            public int AvailableTables { get; set; }
+            public int OccupiedTables { get; set; }
+            public int ReservedTables { get; set; }
+            public int TotalTables { get; set; }
         }
     }
 }

@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using PottaAPI.Models;
 using PottaAPI.Models.Common;
-using PottaAPI.Services;
+using PottaAPI.Services.Interfaces;
 
 namespace PottaAPI.Controllers
 {
@@ -321,6 +321,78 @@ namespace PottaAPI.Controllers
                 {
                     Error = "Failed to delete transaction",
                     Details = $"Database error: {ex.Message}"
+                });
+            }
+        }
+
+
+        /// <summary>
+        /// Update cart items for an existing waiting transaction
+        /// </summary>
+        [HttpPut("waiting/{transactionId}/items")]
+        public async Task<ActionResult<ApiResponseDto<bool>>> UpdateTransactionItems(
+            string transactionId,
+            [FromBody] UpdateTransactionItemsDto request)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(transactionId))
+                    return BadRequest(new ErrorResponseDto
+                    {
+                        Error = "Transaction ID is required",
+                        Details = "TransactionId cannot be empty"
+                    });
+
+                if (request?.Items == null || !request.Items.Any())
+                    return BadRequest(new ErrorResponseDto
+                    {
+                        Error = "Items list is required",
+                        Details = "Cannot update with empty items list"
+                    });
+
+                // Validate each item
+                foreach (var item in request.Items)
+                {
+                    if (string.IsNullOrEmpty(item.ProductId) || string.IsNullOrEmpty(item.Name))
+                        return BadRequest(new ErrorResponseDto
+                        {
+                            Error = "Invalid item data",
+                            Details = "Each item must have ProductId and Name"
+                        });
+
+                    if (item.Quantity <= 0 || item.Price < 0)
+                        return BadRequest(new ErrorResponseDto
+                        {
+                            Error = "Invalid item values",
+                            Details = "Quantity must be > 0 and Price cannot be negative"
+                        });
+                }
+
+                // Check transaction exists first
+                var existing = await _orderService.GetWaitingTransactionByIdAsync(transactionId);
+                if (existing == null)
+                    return NotFound(new ErrorResponseDto
+                    {
+                        Error = "Transaction not found",
+                        Details = $"No waiting transaction found with ID: {transactionId}"
+                    });
+
+                var success = await _orderService.UpdateWaitingTransactionItemsAsync(
+                    transactionId, request.Items, request.StaffId);
+
+                return Ok(new ApiResponseDto<bool>
+                {
+                    Success = true,
+                    Message = $"Transaction {transactionId} items updated successfully",
+                    Data = true
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new ErrorResponseDto
+                {
+                    Error = "Failed to update transaction items",
+                    Details = ex.Message
                 });
             }
         }

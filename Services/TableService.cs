@@ -4,6 +4,8 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Data.Sqlite;
 using PottaAPI.Models;
+using Dapper;
+using PottaAPI.Services.Interfaces;
 
 namespace PottaAPI.Services
 {
@@ -12,22 +14,18 @@ namespace PottaAPI.Services
     {
         private readonly string _connectionString;
 
-        public TableService(string connectionString)
+        public TableService(IConnectionStringProvider connectionStringProvider)
         {
-            _connectionString = connectionString;
+            _connectionString = connectionStringProvider.GetConnectionString();
         }
 
         #region Core Table Operations
 
         public async Task<List<TableDTO>> GetAllTablesAsync()
         {
-            var tables = new List<TableDTO>();
-
             using var connection = new SqliteConnection(_connectionString);
-            await connection.OpenAsync();
-
-            var command = connection.CreateCommand();
-            command.CommandText = @"
+            
+            var sql = @"
                 SELECT branchId, orgId, tableId, tableName, tableNumber, capacity, status, 
                        currentCustomerId, currentTransactionId, description, size, shape, reservationDate,
                        isActive, createdDate, modifiedDate, createdBy, updatedBy, isSynced, lastSynced
@@ -35,24 +33,15 @@ namespace PottaAPI.Services
                 WHERE isActive = 1 
                 ORDER BY tableNumber";
 
-            using var reader = await command.ExecuteReaderAsync();
-            while (await reader.ReadAsync())
-            {
-                tables.Add(MapReaderToTableDTO(reader));
-            }
-
-            return tables;
+            var tables = await connection.QueryAsync<TableDTO>(sql);
+            return tables.ToList();
         }
 
         public async Task<List<TableDTO>> GetAvailableTablesAsync()
         {
-            var tables = new List<TableDTO>();
-
             using var connection = new SqliteConnection(_connectionString);
-            await connection.OpenAsync();
-
-            var command = connection.CreateCommand();
-            command.CommandText = @"
+            
+            var sql = @"
                 SELECT branchId, orgId, tableId, tableName, tableNumber, capacity, status, 
                        currentCustomerId, currentTransactionId, description, size, shape, reservationDate,
                        isActive, createdDate, modifiedDate, createdBy, updatedBy, isSynced, lastSynced
@@ -60,45 +49,29 @@ namespace PottaAPI.Services
                 WHERE isActive = 1 AND status = 'Available'
                 ORDER BY tableNumber";
 
-            using var reader = await command.ExecuteReaderAsync();
-            while (await reader.ReadAsync())
-            {
-                tables.Add(MapReaderToTableDTO(reader));
-            }
-
-            return tables;
+            var tables = await connection.QueryAsync<TableDTO>(sql);
+            return tables.ToList();
         }
 
         public async Task<TableDTO?> GetTableByIdAsync(string tableId)
         {
             using var connection = new SqliteConnection(_connectionString);
-            await connection.OpenAsync();
-
-            var command = connection.CreateCommand();
-            command.CommandText = @"
+            
+            var sql = @"
                 SELECT branchId, orgId, tableId, tableName, tableNumber, capacity, status, 
                        currentCustomerId, currentTransactionId, description, size, shape, reservationDate,
                        isActive, createdDate, modifiedDate, createdBy, updatedBy, isSynced, lastSynced
                 FROM Tables 
                 WHERE tableId = @tableId";
-            command.Parameters.AddWithValue("@tableId", tableId);
 
-            using var reader = await command.ExecuteReaderAsync();
-            if (await reader.ReadAsync())
-            {
-                return MapReaderToTableDTO(reader);
-            }
-
-            return null;
+            return await connection.QueryFirstOrDefaultAsync<TableDTO>(sql, new { tableId });
         }
 
         public async Task<bool> UpdateTableStatusAsync(string tableId, UpdateTableStatusDTO statusDto)
         {
             using var connection = new SqliteConnection(_connectionString);
-            await connection.OpenAsync();
-
-            var command = connection.CreateCommand();
-            command.CommandText = @"
+            
+            var sql = @"
                 UPDATE Tables SET
                     status = @status,
                     currentCustomerId = @customerId,
@@ -107,13 +80,15 @@ namespace PottaAPI.Services
                     isSynced = 0
                 WHERE tableId = @tableId";
 
-            command.Parameters.AddWithValue("@status", statusDto.Status);
-            command.Parameters.AddWithValue("@customerId", statusDto.CustomerId ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("@transactionId", statusDto.TransactionId ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("@modifiedDate", DateTime.UtcNow);
-            command.Parameters.AddWithValue("@tableId", tableId);
+            var rowsAffected = await connection.ExecuteAsync(sql, new
+            {
+                status = statusDto.Status,
+                customerId = statusDto.CustomerId,
+                transactionId = statusDto.TransactionId,
+                modifiedDate = DateTime.UtcNow,
+                tableId
+            });
 
-            var rowsAffected = await command.ExecuteNonQueryAsync();
             return rowsAffected > 0;
         }
 
@@ -123,135 +98,68 @@ namespace PottaAPI.Services
 
         public async Task<List<SeatDTO>> GetTableSeatsAsync(string tableId)
         {
-            var seats = new List<SeatDTO>();
-
             using var connection = new SqliteConnection(_connectionString);
-            await connection.OpenAsync();
-
-            var command = connection.CreateCommand();
-            command.CommandText = @"
+            
+            var sql = @"
                 SELECT seatId, tableId, seatNumber, status, customerId, isActive,
                        createdDate, modifiedDate, createdBy, updatedBy, isSynced, lastSynced
                 FROM Seats 
                 WHERE tableId = @tableId AND isActive = 1 
                 ORDER BY seatNumber";
 
-            command.Parameters.AddWithValue("@tableId", tableId);
-
-            using var reader = await command.ExecuteReaderAsync();
-            while (await reader.ReadAsync())
-            {
-                seats.Add(MapReaderToSeatDTO(reader));
-            }
-
-            return seats;
+            var seats = await connection.QueryAsync<SeatDTO>(sql, new { tableId });
+            return seats.ToList();
         }
 
         public async Task<bool> UpdateSeatStatusAsync(string seatId, UpdateSeatStatusDTO statusDto)
         {
             using var connection = new SqliteConnection(_connectionString);
-            await connection.OpenAsync();
-
-            var command = connection.CreateCommand();
-            command.CommandText = @"
+            
+            var sql = @"
                 UPDATE Seats SET
                     status = @status,
                     customerId = @customerId,
                     modifiedDate = @modifiedDate
                 WHERE seatId = @seatId";
 
-            command.Parameters.AddWithValue("@seatId", seatId);
-            command.Parameters.AddWithValue("@status", statusDto.Status);
-            command.Parameters.AddWithValue("@customerId", statusDto.CustomerId ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("@modifiedDate", DateTime.UtcNow);
+            var rowsAffected = await connection.ExecuteAsync(sql, new
+            {
+                seatId,
+                status = statusDto.Status,
+                customerId = statusDto.CustomerId,
+                modifiedDate = DateTime.UtcNow
+            });
 
-            var rowsAffected = await command.ExecuteNonQueryAsync();
             return rowsAffected > 0;
         }
 
         public async Task<bool> AreAllSeatsOccupiedAsync(string tableId)
         {
             using var connection = new SqliteConnection(_connectionString);
-            await connection.OpenAsync();
-
-            var command = connection.CreateCommand();
-            command.CommandText = @"
+            
+            var sql = @"
                 SELECT COUNT(*) as TotalSeats,
                        SUM(CASE WHEN status = 'Occupied' THEN 1 ELSE 0 END) as OccupiedSeats
                 FROM Seats
                 WHERE tableId = @tableId AND isActive = 1";
 
-            command.Parameters.AddWithValue("@tableId", tableId);
+            var result = await connection.QueryFirstOrDefaultAsync<(int TotalSeats, int OccupiedSeats)>(sql, new { tableId });
 
-            using var reader = await command.ExecuteReaderAsync();
-            if (await reader.ReadAsync())
-            {
-                var totalSeats = Convert.ToInt32(reader["TotalSeats"]);
-                var occupiedSeats = Convert.ToInt32(reader["OccupiedSeats"]);
-
-                // All seats are occupied if total > 0 and total == occupied
-                return totalSeats > 0 && totalSeats == occupiedSeats;
-            }
-
-            return false;
+            // All seats are occupied if total > 0 and total == occupied
+            return result.TotalSeats > 0 && result.TotalSeats == result.OccupiedSeats;
         }
 
         public async Task<bool> AnySeatsOccupiedAsync(string tableId)
         {
             using var connection = new SqliteConnection(_connectionString);
-            await connection.OpenAsync();
-
-            var command = connection.CreateCommand();
-            command.CommandText = @"
+            
+            var sql = @"
                 SELECT COUNT(*)
                 FROM Seats
                 WHERE tableId = @tableId AND isActive = 1 AND status = 'Occupied'";
 
-            command.Parameters.AddWithValue("@tableId", tableId);
-
-            var count = Convert.ToInt32(await command.ExecuteScalarAsync());
+            var count = await connection.ExecuteScalarAsync<int>(sql, new { tableId });
             return count > 0;
-        }
-
-        #endregion
-
-        #region Helper Methods
-
-
-        private TableDTO MapReaderToTableDTO(SqliteDataReader reader)
-        {
-            return new TableDTO
-            {
-                TableId = reader["tableId"]?.ToString(),
-                TableName = reader["tableName"]?.ToString(),
-                TableNumber = Convert.ToInt32(reader["tableNumber"]),
-                Capacity = Convert.ToInt32(reader["capacity"]),
-                Status = reader["status"]?.ToString() ?? "Available",
-                CurrentCustomerId = reader["currentCustomerId"] == DBNull.Value ? null : reader["currentCustomerId"]?.ToString(),
-                CurrentTransactionId = reader["currentTransactionId"] == DBNull.Value ? null : reader["currentTransactionId"]?.ToString(),
-                Description = reader["description"] == DBNull.Value ? null : reader["description"]?.ToString(),
-                Size = reader["size"] == DBNull.Value ? null : reader["size"]?.ToString(),
-                Shape = reader["shape"] == DBNull.Value ? null : reader["shape"]?.ToString(),
-                ReservationDate = reader["reservationDate"] == DBNull.Value ? null : Convert.ToDateTime(reader["reservationDate"]),
-                IsActive = Convert.ToBoolean(reader["isActive"]),
-                CreatedDate = Convert.ToDateTime(reader["createdDate"]),
-                ModifiedDate = Convert.ToDateTime(reader["modifiedDate"])
-            };
-        }
-
-        private SeatDTO MapReaderToSeatDTO(SqliteDataReader reader)
-        {
-            return new SeatDTO
-            {
-                SeatId = reader["seatId"].ToString(),
-                TableId = reader["tableId"].ToString(),
-                SeatNumber = Convert.ToInt32(reader["seatNumber"]),
-                Status = reader["status"].ToString(),
-                CustomerId = reader["customerId"] == DBNull.Value ? null : reader["customerId"].ToString(),
-                IsActive = Convert.ToBoolean(reader["isActive"]),
-                CreatedDate = Convert.ToDateTime(reader["createdDate"]),
-                ModifiedDate = Convert.ToDateTime(reader["modifiedDate"])
-            };
         }
 
         #endregion

@@ -1,6 +1,6 @@
 using PottaAPI.Models;
 
-namespace PottaAPI.Services
+namespace PottaAPI.Services.Interfaces
 {
     /// <summary>
     /// Service for discount operations on waiting transactions

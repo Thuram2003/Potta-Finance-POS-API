@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using PottaAPI.Models;
 using PottaAPI.Models.Common;
-using PottaAPI.Services;
+using PottaAPI.Services.Interfaces;
 
 namespace PottaAPI.Controllers
 {

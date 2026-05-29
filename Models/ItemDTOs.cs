@@ -10,7 +10,7 @@ namespace PottaAPI.Models
         public string Id { get; set; } = "";
         public string Name { get; set; } = "";
         public string SKU { get; set; } = "";
-        public string Type { get; set; } = ""; // "Product", "Bundle", "Recipe"
+        public string Type { get; set; } = ""; // "Product", "Bundle", "Recipe", "Variation", "Service"
         public string Description { get; set; } = "";
         public decimal Cost { get; set; }
         public decimal SalesPrice { get; set; }
@@ -24,6 +24,23 @@ namespace PottaAPI.Models
         public string StatusDisplay => Status ? "Active" : "Inactive";
         public List<string> Categories { get; set; } = new();
         public string CategoriesDisplay => Categories.Any() ? string.Join(", ", Categories) : "Uncategorized";
+        
+        // Tax information (populated from LEFT JOIN with Taxes table)
+        public string TaxName { get; set; } = "";
+        public string TaxType { get; set; } = ""; // "Percentage" or "Flat Rate"
+        public decimal TaxRate { get; set; } = 0; // Percentage value or flat rate amount
+        public TaxDTO? Tax { get; set; } // Full tax object (populated for detail endpoints)
+        
+        // Variation-specific fields (only populated for type="Variation")
+        public string? ParentProductId { get; set; }
+        public string? AttributeValuesDisplay { get; set; }
+        
+        // Multi-unit pricing flag
+        public bool HasMultiUnitPricing { get; set; }
+        
+        // Inventory fields
+        public decimal InventoryOnHand { get; set; }
+        public string StockStatus => InventoryOnHand > 0 ? "in-stock" : "out-of-stock";
     }
 
     /// <summary>
@@ -121,6 +138,7 @@ namespace PottaAPI.Models
         public string BundleInfo => IsRecipe ? $"Recipe ({ServingSize} servings)" : $"Bundle ({Components.Count} items)";
         public string RecipeTypeDisplay => IsRecipe ? "Recipe" : "Bundle";
         public List<BundleComponentDto> Components { get; set; } = new();
+        public List<ModifierDto> Modifiers { get; set; } = new();
     }
 
     /// <summary>

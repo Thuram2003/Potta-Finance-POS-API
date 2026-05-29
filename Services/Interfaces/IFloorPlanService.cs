@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using PottaAPI.Models;
 
-namespace PottaAPI.Services
+namespace PottaAPI.Services.Interfaces
 {
     /// <summary>
     /// Floor plan service interface for mobile device operations.

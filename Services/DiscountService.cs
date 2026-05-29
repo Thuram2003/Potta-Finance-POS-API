@@ -1,5 +1,7 @@
 using Microsoft.Data.Sqlite;
 using PottaAPI.Models;
+using Dapper;
+using PottaAPI.Services.Interfaces;
 
 namespace PottaAPI.Services
 {
@@ -22,10 +24,8 @@ namespace PottaAPI.Services
             try
             {
                 using var connection = new SqliteConnection(_connectionString);
-                await connection.OpenAsync();
 
-                var command = connection.CreateCommand();
-                command.CommandText = @"
+                var sql = @"
                     SELECT discountId, couponCode, discountName, discountType, percentage, flatRate, 
                            description, requiresApproval, isActive, validFrom, validUntil, usageLimit, 
                            usageCount, createdDate, modifiedDate
@@ -33,15 +33,8 @@ namespace PottaAPI.Services
                     WHERE isActive = 1
                     ORDER BY discountName";
 
-                var discounts = new List<DiscountDTO>();
-                using var reader = await command.ExecuteReaderAsync();
-
-                while (await reader.ReadAsync())
-                {
-                    discounts.Add(MapDiscountFromReader(reader));
-                }
-
-                return discounts;
+                var discounts = await connection.QueryAsync<DiscountDTO>(sql);
+                return discounts.ToList();
             }
             catch (Exception ex)
             {
@@ -58,26 +51,22 @@ namespace PottaAPI.Services
             try
             {
                 using var connection = new SqliteConnection(_connectionString);
-                await connection.OpenAsync();
 
-                var command = connection.CreateCommand();
-                command.CommandText = @"
+                var sql = @"
                     SELECT discountId, couponCode, discountName, discountType, percentage, flatRate, 
                            description, requiresApproval, isActive, validFrom, validUntil, usageLimit, 
                            usageCount, createdDate, modifiedDate
                     FROM Discounts 
                     WHERE couponCode = @couponCode AND isActive = 1";
-                command.Parameters.AddWithValue("@couponCode", couponCode);
 
-                using var reader = await command.ExecuteReaderAsync();
+                var discount = await connection.QueryFirstOrDefaultAsync<DiscountDTO>(sql, new { couponCode });
 
-                if (!await reader.ReadAsync())
+                if (discount == null)
                 {
                     _logger.LogWarning("Discount not found for coupon code: {CouponCode}", couponCode);
-                    return null;
                 }
 
-                return MapDiscountFromReader(reader);
+                return discount;
             }
             catch (Exception ex)
             {
@@ -91,16 +80,13 @@ namespace PottaAPI.Services
             try
             {
                 using var connection = new SqliteConnection(_connectionString);
-                await connection.OpenAsync();
 
-                var command = connection.CreateCommand();
-                command.CommandText = @"
+                var sql = @"
                     UPDATE Discounts 
                     SET usageCount = usageCount + 1 
                     WHERE discountId = @discountId";
-                command.Parameters.AddWithValue("@discountId", discountId);
 
-                var result = await command.ExecuteNonQueryAsync();
+                var result = await connection.ExecuteAsync(sql, new { discountId });
                 return result > 0;
             }
             catch (Exception ex)
@@ -108,28 +94,6 @@ namespace PottaAPI.Services
                 _logger.LogError(ex, "Error incrementing usage count: {DiscountId}", discountId);
                 return false;
             }
-        }
-
-        private DiscountDTO MapDiscountFromReader(SqliteDataReader reader)
-        {
-            return new DiscountDTO
-            {
-                DiscountId = reader["discountId"]?.ToString() ?? string.Empty,
-                CouponCode = reader["couponCode"]?.ToString() ?? string.Empty,
-                DiscountName = reader["discountName"]?.ToString() ?? string.Empty,
-                DiscountType = reader["discountType"]?.ToString() ?? string.Empty,
-                Percentage = reader["percentage"] != DBNull.Value ? Convert.ToDecimal(reader["percentage"]) : 0,
-                FlatRate = reader["flatRate"] != DBNull.Value ? Convert.ToDecimal(reader["flatRate"]) : 0,
-                Description = reader["description"]?.ToString() ?? string.Empty,
-                RequiresApproval = reader["requiresApproval"] != DBNull.Value && Convert.ToBoolean(reader["requiresApproval"]),
-                IsActive = reader["isActive"] != DBNull.Value && Convert.ToBoolean(reader["isActive"]),
-                ValidFrom = reader["validFrom"] != DBNull.Value ? (DateTime?)Convert.ToDateTime(reader["validFrom"]) : null,
-                ValidUntil = reader["validUntil"] != DBNull.Value ? (DateTime?)Convert.ToDateTime(reader["validUntil"]) : null,
-                UsageLimit = reader["usageLimit"] != DBNull.Value ? Convert.ToInt32(reader["usageLimit"]) : 0,
-                UsageCount = reader["usageCount"] != DBNull.Value ? Convert.ToInt32(reader["usageCount"]) : 0,
-                CreatedDate = reader["createdDate"] != DBNull.Value ? Convert.ToDateTime(reader["createdDate"]) : DateTime.Now,
-                ModifiedDate = reader["modifiedDate"] != DBNull.Value ? Convert.ToDateTime(reader["modifiedDate"]) : DateTime.Now
-            };
         }
     }
 }

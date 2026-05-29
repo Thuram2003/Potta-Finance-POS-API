@@ -1,7 +1,7 @@
 using System.Threading.Tasks;
 using PottaAPI.Models;
 
-namespace PottaAPI.Services
+namespace PottaAPI.Services.Interfaces
 {
     // Staff authentication service interface (read-only)
     public interface IStaffService

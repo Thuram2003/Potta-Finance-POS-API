@@ -1,6 +1,7 @@
 using PottaAPI.Models;
+using System.Collections.Generic;
 
-namespace PottaAPI.Services
+namespace PottaAPI.Services.Interfaces
 {
     /// <summary>
     /// Interface for order/waiting transaction operations
@@ -41,5 +42,11 @@ namespace PottaAPI.Services
         /// Get orders for a specific customer (for customer history)
         /// </summary>
         Task<List<WaitingTransactionDto>> GetOrdersByCustomerAsync(string customerId);
+
+        /// <summary>
+        /// Update cart items for an existing waiting transaction
+        /// </summary>
+        Task<bool> UpdateWaitingTransactionItemsAsync(string transactionId, List<WaitingTransactionItemDto> items, int? staffId = null);
+
     }
 }

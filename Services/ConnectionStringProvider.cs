@@ -1,3 +1,5 @@
+using PottaAPI.Services.Interfaces;
+
 namespace PottaAPI.Services
 {
     public class ConnectionStringProvider : IConnectionStringProvider
@@ -74,7 +76,6 @@ namespace PottaAPI.Services
                 Console.WriteLine($"Running in PRODUCTION mode. Searching for database...");
             }
 
-            // Search for the database file
             foreach (var path in possiblePaths)
             {
                 Console.WriteLine($"Checking: {path}");
@@ -84,7 +85,6 @@ namespace PottaAPI.Services
                 }
             }
 
-            // Log all attempted paths for debugging
             Console.WriteLine("Database not found in any of the following locations:");
             foreach (var path in possiblePaths)
             {

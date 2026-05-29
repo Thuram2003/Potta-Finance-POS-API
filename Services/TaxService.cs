@@ -1,6 +1,8 @@
 using Microsoft.Data.Sqlite;
 using PottaAPI.Models;
 using System.Data;
+using Dapper;
+using PottaAPI.Services.Interfaces;
 
 namespace PottaAPI.Services
 {
@@ -32,25 +34,21 @@ namespace PottaAPI.Services
             try
             {
                 using var connection = new SqliteConnection(_connectionString);
-                await connection.OpenAsync();
 
-                var command = connection.CreateCommand();
-                command.CommandText = @"
+                var sql = @"
                     SELECT taxId, taxName, taxType, description, percentage, flatRate, 
                            percentageCap, isActive, createdDate, modifiedDate
                     FROM Taxes 
                     WHERE taxId = @taxId AND isActive = 1";
-                command.Parameters.AddWithValue("@taxId", taxId);
 
-                using var reader = await command.ExecuteReaderAsync();
+                var tax = await connection.QueryFirstOrDefaultAsync<TaxDTO>(sql, new { taxId });
 
-                if (!await reader.ReadAsync())
+                if (tax == null)
                 {
                     _logger.LogWarning("Tax not found for ID: {TaxId}", taxId);
-                    return null;
                 }
 
-                return MapTaxFromReader(reader);
+                return tax;
             }
             catch (Exception ex)
             {
@@ -67,25 +65,16 @@ namespace PottaAPI.Services
             try
             {
                 using var connection = new SqliteConnection(_connectionString);
-                await connection.OpenAsync();
 
-                var command = connection.CreateCommand();
-                command.CommandText = @"
+                var sql = @"
                     SELECT taxId, taxName, taxType, description, percentage, flatRate, 
                            percentageCap, isActive, createdDate, modifiedDate
                     FROM Taxes 
                     WHERE isActive = 1 
                     ORDER BY taxName";
 
-                var taxes = new List<TaxDTO>();
-                using var reader = await command.ExecuteReaderAsync();
-
-                while (await reader.ReadAsync())
-                {
-                    taxes.Add(MapTaxFromReader(reader));
-                }
-
-                return taxes;
+                var taxes = await connection.QueryAsync<TaxDTO>(sql);
+                return taxes.ToList();
             }
             catch (Exception ex)
             {
@@ -322,32 +311,6 @@ namespace PottaAPI.Services
         public async Task UpdateOrderItemTaxesAsync(List<WaitingTransactionItemDto> items)
         {
             await CalculateTotalTaxAsync(items);
-        }
-
-        /// <summary>
-        /// Map SqliteDataReader to TaxDTO
-        /// </summary>
-        private TaxDTO MapTaxFromReader(SqliteDataReader reader)
-        {
-            return new TaxDTO
-            {
-                TaxId = reader["taxId"]?.ToString() ?? string.Empty,
-                TaxName = reader["taxName"]?.ToString() ?? string.Empty,
-                TaxType = reader["taxType"]?.ToString() ?? string.Empty,
-                Description = reader["description"]?.ToString() ?? string.Empty,
-                Percentage = reader["percentage"] != DBNull.Value ? Convert.ToDouble(reader["percentage"]) : 0,
-                FlatRate = reader["flatRate"] != DBNull.Value ? Convert.ToDouble(reader["flatRate"]) : 0,
-                PercentageCap = reader["percentageCap"] != DBNull.Value 
-                    ? Convert.ToDouble(reader["percentageCap"]) 
-                    : null,
-                IsActive = reader["isActive"] != DBNull.Value && Convert.ToBoolean(reader["isActive"]),
-                CreatedDate = reader["createdDate"] != DBNull.Value 
-                    ? Convert.ToDateTime(reader["createdDate"]) 
-                    : DateTime.Now,
-                ModifiedDate = reader["modifiedDate"] != DBNull.Value 
-                    ? Convert.ToDateTime(reader["modifiedDate"]) 
-                    : DateTime.Now
-            };
         }
     }
 }

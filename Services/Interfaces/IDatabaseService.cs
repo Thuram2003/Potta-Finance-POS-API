@@ -1,6 +1,6 @@
 using PottaAPI.Models;
 
-namespace PottaAPI.Services
+namespace PottaAPI.Services.Interfaces
 {
     public interface IDatabaseService
     {

@@ -4,6 +4,8 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.Data.Sqlite;
 using PottaAPI.Models;
+using Dapper;
+using PottaAPI.Services.Interfaces;
 
 namespace PottaAPI.Services
 {
@@ -13,9 +15,9 @@ namespace PottaAPI.Services
         private readonly string _connectionString;
         private const int CODE_EXPIRY_HOURS = 24;
 
-        public StaffService(string connectionString)
+        public StaffService(IConnectionStringProvider connectionStringProvider)
         {
-            _connectionString = connectionString;
+            _connectionString = connectionStringProvider.GetConnectionString();
         }
 
         // Authenticate staff with daily code
@@ -151,40 +153,22 @@ namespace PottaAPI.Services
             try
             {
                 using var connection = new SqliteConnection(_connectionString);
-                await connection.OpenAsync();
 
-                var query = @"
+                var sql = @"
                     SELECT Id, FirstName, LastName, Email, Phone, DailyCode, 
                            CodeGeneratedDate, IsActive
                     FROM Staff 
                     WHERE DailyCode = @DailyCode AND IsActive = 1";
 
-                using var command = new SqliteCommand(query, connection);
-                command.Parameters.AddWithValue("@DailyCode", dailyCode);
+                var staff = await connection.QueryFirstOrDefaultAsync<StaffDTO>(sql, new { DailyCode = dailyCode });
 
-                using var reader = await command.ExecuteReaderAsync();
-                if (await reader.ReadAsync())
+                if (staff != null)
                 {
-                    var codeGeneratedDate = DateTime.Parse(reader["CodeGeneratedDate"].ToString()!);
-                    var codeExpiresAt = codeGeneratedDate.AddHours(CODE_EXPIRY_HOURS);
-                    var isExpired = DateTime.Now > codeExpiresAt;
-
-                    return new StaffDTO
-                    {
-                        Id = Convert.ToInt32(reader["Id"]),
-                        FirstName = reader["FirstName"]?.ToString() ?? "",
-                        LastName = reader["LastName"]?.ToString() ?? "",
-                        Email = reader["Email"]?.ToString() ?? "",
-                        Phone = reader["Phone"]?.ToString() ?? "",
-                        DailyCode = reader["DailyCode"]?.ToString() ?? "",
-                        CodeGeneratedDate = codeGeneratedDate,
-                        CodeExpiresAt = codeExpiresAt,
-                        IsCodeExpired = isExpired,
-                        IsActive = Convert.ToInt32(reader["IsActive"]) == 1
-                    };
+                    staff.CodeExpiresAt = staff.CodeGeneratedDate.AddHours(CODE_EXPIRY_HOURS);
+                    staff.IsCodeExpired = DateTime.Now > staff.CodeExpiresAt;
                 }
 
-                return null;
+                return staff;
             }
             catch (Exception ex)
             {
@@ -199,44 +183,25 @@ namespace PottaAPI.Services
             try
             {
                 using var connection = new SqliteConnection(_connectionString);
-                await connection.OpenAsync();
 
-                var query = @"
+                var sql = @"
                     SELECT Id, FirstName, LastName, Email, Phone, DailyCode, 
                            CodeGeneratedDate, IsActive
                     FROM Staff 
                     WHERE Id = @StaffId";
 
-                using var command = new SqliteCommand(query, connection);
-                command.Parameters.AddWithValue("@StaffId", staffId);
+                var staff = await connection.QueryFirstOrDefaultAsync<StaffDTO>(sql, new { StaffId = staffId });
 
-                using var reader = await command.ExecuteReaderAsync();
-                if (await reader.ReadAsync())
+                if (staff != null)
                 {
-                    var codeGeneratedDate = reader["CodeGeneratedDate"] != DBNull.Value 
-                        ? DateTime.Parse(reader["CodeGeneratedDate"].ToString()!) 
-                        : DateTime.MinValue;
-                    var codeExpiresAt = codeGeneratedDate != DateTime.MinValue 
-                        ? codeGeneratedDate.AddHours(CODE_EXPIRY_HOURS) 
-                        : DateTime.MinValue;
-                    var isExpired = codeGeneratedDate != DateTime.MinValue && DateTime.Now > codeExpiresAt;
-
-                    return new StaffDTO
+                    if (staff.CodeGeneratedDate != DateTime.MinValue)
                     {
-                        Id = Convert.ToInt32(reader["Id"]),
-                        FirstName = reader["FirstName"]?.ToString() ?? "",
-                        LastName = reader["LastName"]?.ToString() ?? "",
-                        Email = reader["Email"]?.ToString() ?? "",
-                        Phone = reader["Phone"]?.ToString() ?? "",
-                        DailyCode = reader["DailyCode"]?.ToString() ?? "",
-                        CodeGeneratedDate = codeGeneratedDate,
-                        CodeExpiresAt = codeExpiresAt,
-                        IsCodeExpired = isExpired,
-                        IsActive = Convert.ToInt32(reader["IsActive"]) == 1
-                    };
+                        staff.CodeExpiresAt = staff.CodeGeneratedDate.AddHours(CODE_EXPIRY_HOURS);
+                        staff.IsCodeExpired = DateTime.Now > staff.CodeExpiresAt;
+                    }
                 }
 
-                return null;
+                return staff;
             }
             catch (Exception ex)
             {
@@ -251,23 +216,20 @@ namespace PottaAPI.Services
             try
             {
                 using var connection = new SqliteConnection(_connectionString);
-                await connection.OpenAsync();
 
-                var query = @"
+                var sql = @"
                     SELECT Id, FirstName, LastName, DailyCode, CodeGeneratedDate, IsActive
                     FROM Staff 
                     WHERE Id = @StaffId AND IsActive = 1";
 
-                using var command = new SqliteCommand(query, connection);
-                command.Parameters.AddWithValue("@StaffId", staffId);
+                var staff = await connection.QueryFirstOrDefaultAsync<dynamic>(sql, new { StaffId = staffId });
 
-                using var reader = await command.ExecuteReaderAsync();
-                if (await reader.ReadAsync())
+                if (staff != null)
                 {
-                    var firstName = reader["FirstName"]?.ToString() ?? "";
-                    var lastName = reader["LastName"]?.ToString() ?? "";
-                    var dailyCode = reader["DailyCode"]?.ToString() ?? "";
-                    var codeGeneratedDate = DateTime.Parse(reader["CodeGeneratedDate"].ToString()!);
+                    var firstName = (string)staff.FirstName ?? "";
+                    var lastName = (string)staff.LastName ?? "";
+                    var dailyCode = (string)staff.DailyCode ?? "";
+                    var codeGeneratedDate = (DateTime)staff.CodeGeneratedDate;
                     var expiresAt = codeGeneratedDate.AddHours(CODE_EXPIRY_HOURS);
 
                     var qrData = new StaffQRCodeData

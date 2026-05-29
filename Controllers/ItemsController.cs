@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using PottaAPI.Models;
 using PottaAPI.Models.Common;
 using PottaAPI.Services;
+using PottaAPI.Services.Interfaces;
 
 namespace PottaAPI.Controllers
 {
@@ -351,6 +352,72 @@ namespace PottaAPI.Controllers
                 return StatusCode(500, new ErrorResponseDto
                 {
                     Error = "Failed to retrieve variation",
+                    Details = ex.Message
+                });
+            }
+        }
+
+        #endregion
+
+        #region Service Operations
+
+        /// <summary>
+        /// Get all service items
+        /// </summary>
+        [HttpGet("services")]
+        public async Task<ActionResult<ApiResponseDto<List<ProductDto>>>> GetAllServices()
+        {
+            try
+            {
+                var services = await _itemService.GetAllServicesAsync();
+                return Ok(new ApiResponseDto<List<ProductDto>>
+                {
+                    Success = true,
+                    Message = $"Retrieved {services.Count} services",
+                    Data = services
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new ErrorResponseDto
+                {
+                    Error = "Failed to retrieve services",
+                    Details = ex.Message
+                });
+            }
+        }
+
+        /// <summary>
+        /// Get service by ID
+        /// </summary>
+        [HttpGet("services/{id}")]
+        public async Task<ActionResult<ApiResponseDto<ProductDto>>> GetServiceById(string id)
+        {
+            try
+            {
+                var service = await _itemService.GetProductByIdAsync(id);
+                
+                if (service == null || service.Type != "Service")
+                {
+                    return NotFound(new ErrorResponseDto
+                    {
+                        Error = "Service not found",
+                        Details = $"No service found with ID: {id}"
+                    });
+                }
+
+                return Ok(new ApiResponseDto<ProductDto>
+                {
+                    Success = true,
+                    Message = "Service retrieved successfully",
+                    Data = service
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new ErrorResponseDto
+                {
+                    Error = "Failed to retrieve service",
                     Details = ex.Message
                 });
             }

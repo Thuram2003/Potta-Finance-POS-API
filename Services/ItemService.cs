@@ -3,6 +3,7 @@ using Microsoft.Extensions.Caching.Memory;
 using PottaAPI.Models;
 using System.Data;
 using Newtonsoft.Json;
+using PottaAPI.Services.Interfaces;
 
 namespace PottaAPI.Services
 {
@@ -14,9 +15,9 @@ namespace PottaAPI.Services
 
         // Cache keys
         private const string CacheKeyAllProducts = "items:all_products";
-        private const string CacheKeyAllBundles  = "items:all_bundles";
-        private const string CacheKeyAllRecipes  = "items:all_recipes";
-        private const string CacheKeyAllItems    = "items:all_items";
+        private const string CacheKeyAllBundles = "items:all_bundles";
+        private const string CacheKeyAllRecipes = "items:all_recipes";
+        private const string CacheKeyAllItems = "items:all_items";
         private const string CacheKeyAssemblyIds = "items:assembly_ids";
         private const string CacheKeyAllModifiers = "items:all_modifiers";
         private const string CacheKeyAllCategories = "items:all_categories";
@@ -24,11 +25,12 @@ namespace PottaAPI.Services
         // How long list results stay cached (products change infrequently during a shift)
         private static readonly TimeSpan ListCacheDuration = TimeSpan.FromMinutes(2);
 
-        public ItemService(string connectionString, IMemoryCache? cache = null)
+        public ItemService(IConnectionStringProvider connectionStringProvider, IMemoryCache? cache = null)
         {
-            _connectionString = connectionString;
+            _connectionString = connectionStringProvider.GetConnectionString();
             _cache = cache;
         }
+
 
         /// <summary>Invalidates all item-related cache entries (call after any write operation).</summary>
         public void InvalidateCache()
@@ -49,15 +51,82 @@ namespace PottaAPI.Services
             if (_cache != null && _cache.TryGetValue(CacheKeyAllItems, out List<ItemDto>? cached) && cached != null)
                 return cached;
 
-            // Run both queries in parallel — they use independent connections
-            var productsTask = GetAllProductsAsync();
-            var bundlesTask  = GetAllBundlesAsync();
-            await Task.WhenAll(productsTask, bundlesTask);
+            var items = new List<ItemDto>();
 
-            var items = new List<ItemDto>(productsTask.Result.Count + bundlesTask.Result.Count);
-            items.AddRange(productsTask.Result.Cast<ItemDto>());
-            items.AddRange(bundlesTask.Result.Cast<ItemDto>());
-            items.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
+            using var connection = new SqliteConnection(_connectionString);
+            await connection.OpenAsync();
+
+            // UNION ALL query to get ALL sellable items:
+            // 1. Products (excluding ingredients)
+            // 2. Variations (all active variations)
+            // 3. Bundles (isRecipe = 0)
+            // 4. Recipes (isRecipe = 1)
+            // 5. Services (type = 'Service')
+            var command = connection.CreateCommand();
+            command.CommandTimeout = 30;
+            command.CommandText = @"
+                -- Products (excluding ingredients, including those in assemblies)
+                SELECT p.productId as Id, p.name, p.sku, p.type, p.description,
+                       p.cost, p.salesPrice, p.imagePath, p.status, p.taxable, p.taxId,
+                       p.createdDate, p.modifiedDate, p.inventoryOnHand, p.reorderPoint,
+                       p.unitOfMeasure, p.categories, p.hasVariations, p.variationCount,
+                       p.isIngredient, p.costPerUnit, p.purchaseUnit, p.recipeUnit,
+                       p.conversionFactor, p.purchaseMode, p.hasMultiUnitPricing,
+                       t.taxName, t.taxType, t.percentage, t.flatRate,
+                       NULL as parentProductId, NULL as attributeValuesDisplay
+                FROM Products p
+                LEFT JOIN Taxes t ON p.taxId = t.taxId AND t.isActive = 1
+                WHERE p.status = 1 AND p.isIngredient = 0
+
+                UNION ALL
+
+                -- Variations (all active variations as standalone items)
+                SELECT v.variationId as Id, v.name, v.sku, 'Variation' as type, '' as description,
+                       v.cost, v.salesPrice, v.imagePath, v.status, 1 as taxable, p.taxId,
+                       v.createdDate, v.modifiedDate, v.inventoryOnHand, v.reorderPoint,
+                       p.unitOfMeasure, p.categories, 0 as hasVariations, 0 as variationCount,
+                       0 as isIngredient, 0 as costPerUnit, '' as purchaseUnit, '' as recipeUnit,
+                       1 as conversionFactor, 'Standard' as purchaseMode, v.hasMultiUnitPricing,
+                       t.taxName, t.taxType, t.percentage, t.flatRate,
+                       v.parentProductId, '' as attributeValuesDisplay
+                FROM ProductVariations v
+                INNER JOIN Products p ON v.parentProductId = p.productId
+                LEFT JOIN Taxes t ON p.taxId = t.taxId AND t.isActive = 1
+                WHERE v.status = 1
+
+                UNION ALL
+
+                -- Bundles and Recipes
+                SELECT b.bundleId as Id, b.name, b.sku,
+                       CASE WHEN b.isRecipe = 1 THEN 'Recipe' ELSE 'Bundle' END as type,
+                       b.description, b.cost, b.salesPrice, b.imagePath, b.status,
+                       b.taxable, b.taxId, b.createdDate, b.modifiedDate,
+                       b.inventoryOnHand, b.reorderPoint,
+                       '' as unitOfMeasure, '' as categories,
+                       0 as hasVariations, 0 as variationCount,
+                       0 as isIngredient, 0 as costPerUnit,
+                       '' as purchaseUnit, '' as recipeUnit,
+                       1 as conversionFactor, 'Standard' as purchaseMode, 0 as hasMultiUnitPricing,
+                       t.taxName, t.taxType, t.percentage, t.flatRate,
+                       NULL as parentProductId, NULL as attributeValuesDisplay
+                FROM BundleItems b
+                LEFT JOIN Taxes t ON b.taxId = t.taxId AND t.isActive = 1
+                WHERE b.status = 1
+
+                ORDER BY name";
+
+            using var reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                var typeStr = reader["type"]?.ToString() ?? "Product";
+                ItemDto? item = typeStr switch
+                {
+                    "Bundle" or "Recipe" => CreateBundleFromDataReader(reader),
+                    "Variation" => CreateVariationItemFromDataReader(reader),
+                    _ => CreateProductFromDataReader(reader)
+                };
+                if (item != null) items.Add(item);
+            }
 
             _cache?.Set(CacheKeyAllItems, items, ListCacheDuration);
             return items;
@@ -83,8 +152,9 @@ namespace PottaAPI.Services
             using var connection = new SqliteConnection(_connectionString);
             await connection.OpenAsync();
 
-            // Build search condition fragments (no WHERE keyword — appended with AND below)
+            // Build search condition fragments
             string productSearchCondition;
+            string variationSearchCondition;
             string bundleSearchCondition;
             var parameters = new List<SqliteParameter>();
 
@@ -95,6 +165,12 @@ namespace PottaAPI.Services
                     p.sku  LIKE @searchTerm OR 
                     p.description LIKE @searchTerm OR
                     p.categories  LIKE @searchTerm
+                )";
+
+                variationSearchCondition = @"AND (
+                    v.name LIKE @searchTerm OR 
+                    v.sku  LIKE @searchTerm OR
+                    p.name LIKE @searchTerm
                 )";
 
                 bundleSearchCondition = @"AND (
@@ -108,7 +184,8 @@ namespace PottaAPI.Services
             else
             {
                 productSearchCondition = "";
-                bundleSearchCondition  = "";
+                variationSearchCondition = "";
+                bundleSearchCondition = "";
             }
 
             // ── Count query ────────────────────────────────────────────────────────────
@@ -118,14 +195,14 @@ namespace PottaAPI.Services
                 SELECT
                   (SELECT COUNT(*)
                    FROM Products p
-                   LEFT JOIN (
-                       SELECT DISTINCT bc.productId
-                       FROM BundleComponents bc
-                       INNER JOIN BundleItems ba ON bc.bundleId = ba.bundleId
-                       WHERE (ba.structure = 'Assembly' OR ba.isRecipe = 1) AND ba.status = 1
-                   ) asmb ON asmb.productId = p.productId
-                   WHERE p.status = 1 AND p.isIngredient = 0 AND asmb.productId IS NULL
+                   WHERE p.status = 1 AND p.isIngredient = 0
                    {productSearchCondition})
+                +
+                  (SELECT COUNT(*)
+                   FROM ProductVariations v
+                   INNER JOIN Products p ON v.parentProductId = p.productId
+                   WHERE v.status = 1
+                   {variationSearchCondition})
                 +
                   (SELECT COUNT(*)
                    FROM BundleItems b
@@ -144,24 +221,40 @@ namespace PottaAPI.Services
             var dataCmd = connection.CreateCommand();
             dataCmd.CommandTimeout = 30;
             dataCmd.CommandText = $@"
-                SELECT p.productId as Id, p.name, p.sku, 'Product' as type, p.description,
+                -- Products (including services)
+                SELECT p.productId as Id, p.name, p.sku, p.type, p.description,
                        p.cost, p.salesPrice, p.imagePath, p.status, p.taxable, p.taxId,
                        p.createdDate, p.modifiedDate, p.inventoryOnHand, p.reorderPoint,
                        p.unitOfMeasure, p.categories, p.hasVariations, p.variationCount,
                        p.isIngredient, p.costPerUnit, p.purchaseUnit, p.recipeUnit,
-                       p.conversionFactor, p.purchaseMode
+                       p.conversionFactor, p.purchaseMode, p.hasMultiUnitPricing,
+                       t.taxName, t.taxType, t.percentage, t.flatRate,
+                       NULL as parentProductId, NULL as attributeValuesDisplay
                 FROM Products p
-                LEFT JOIN (
-                    SELECT DISTINCT bc.productId
-                    FROM BundleComponents bc
-                    INNER JOIN BundleItems ba ON bc.bundleId = ba.bundleId
-                    WHERE (ba.structure = 'Assembly' OR ba.isRecipe = 1) AND ba.status = 1
-                ) asmb ON asmb.productId = p.productId
-                WHERE p.status = 1 AND p.isIngredient = 0 AND asmb.productId IS NULL
+                LEFT JOIN Taxes t ON p.taxId = t.taxId AND t.isActive = 1
+                WHERE p.status = 1 AND p.isIngredient = 0
                 {productSearchCondition}
 
                 UNION ALL
 
+                -- Variations
+                SELECT v.variationId as Id, v.name, v.sku, 'Variation' as type, '' as description,
+                       v.cost, v.salesPrice, v.imagePath, v.status, 1 as taxable, p.taxId,
+                       v.createdDate, v.modifiedDate, v.inventoryOnHand, v.reorderPoint,
+                       p.unitOfMeasure, p.categories, 0 as hasVariations, 0 as variationCount,
+                       0 as isIngredient, 0 as costPerUnit, '' as purchaseUnit, '' as recipeUnit,
+                       1 as conversionFactor, 'Standard' as purchaseMode, v.hasMultiUnitPricing,
+                       t.taxName, t.taxType, t.percentage, t.flatRate,
+                       v.parentProductId, '' as attributeValuesDisplay
+                FROM ProductVariations v
+                INNER JOIN Products p ON v.parentProductId = p.productId
+                LEFT JOIN Taxes t ON p.taxId = t.taxId AND t.isActive = 1
+                WHERE v.status = 1
+                {variationSearchCondition}
+
+                UNION ALL
+
+                -- Bundles and Recipes
                 SELECT b.bundleId as Id, b.name, b.sku,
                        CASE WHEN b.isRecipe = 1 THEN 'Recipe' ELSE 'Bundle' END as type,
                        b.description, b.cost, b.salesPrice, b.imagePath, b.status,
@@ -171,8 +264,11 @@ namespace PottaAPI.Services
                        0 as hasVariations, 0 as variationCount,
                        0 as isIngredient, 0 as costPerUnit,
                        '' as purchaseUnit, '' as recipeUnit,
-                       1 as conversionFactor, 'Standard' as purchaseMode
+                       1 as conversionFactor, 'Standard' as purchaseMode, 0 as hasMultiUnitPricing,
+                       t.taxName, t.taxType, t.percentage, t.flatRate,
+                       NULL as parentProductId, NULL as attributeValuesDisplay
                 FROM BundleItems b
+                LEFT JOIN Taxes t ON b.taxId = t.taxId AND t.isActive = 1
                 WHERE b.status = 1
                 {bundleSearchCondition}
 
@@ -188,20 +284,23 @@ namespace PottaAPI.Services
             while (await reader.ReadAsync())
             {
                 var typeStr = reader["type"]?.ToString() ?? "Product";
-                var item = typeStr is "Bundle" or "Recipe"
-                    ? CreateBundleFromDataReader(reader)
-                    : (ItemDto?)CreateProductFromDataReader(reader);
+                ItemDto? item = typeStr switch
+                {
+                    "Bundle" or "Recipe" => CreateBundleFromDataReader(reader),
+                    "Variation" => CreateVariationItemFromDataReader(reader),
+                    _ => CreateProductFromDataReader(reader)
+                };
                 if (item != null) items.Add(item);
             }
 
             return new ItemSearchResponseDto
             {
-                Items      = items,
+                Items = items,
                 TotalCount = totalCount,
-                Page       = searchRequest.Page,
-                PageSize   = searchRequest.PageSize,
-                ItemType   = "",
-                Category   = ""
+                Page = searchRequest.Page,
+                PageSize = searchRequest.PageSize,
+                ItemType = "",
+                Category = ""
             };
         }
 
@@ -211,7 +310,7 @@ namespace PottaAPI.Services
             var command = connection.CreateCommand();
             command.CommandText = query;
             command.CommandTimeout = 30;
-            
+
             foreach (var param in parameters)
             {
                 command.Parameters.Add(new SqliteParameter(param.ParameterName, param.Value));
@@ -228,7 +327,7 @@ namespace PottaAPI.Services
                     count++;
                 }
             }
-            
+
             System.Diagnostics.Debug.WriteLine($"ExecuteSearchQuery: Found {count} items of type '{itemType}'");
         }
 
@@ -263,7 +362,7 @@ namespace PottaAPI.Services
                 stats.LowStockItems = productReader.GetInt32("LowStockProducts");
                 stats.IngredientsCount = productReader.GetInt32("IngredientsCount");
                 stats.TotalInventoryValue = productReader.GetDecimal("ProductInventoryValue");
-                
+
                 if (!productReader.IsDBNull("LastProductCreated"))
                 {
                     stats.LastItemCreated = productReader.GetDateTime("LastProductCreated");
@@ -290,7 +389,7 @@ namespace PottaAPI.Services
                 stats.InactiveItems += bundleReader.GetInt32("InactiveBundles");
                 stats.TotalRecipes = bundleReader.GetInt32("TotalRecipes");
                 stats.TotalInventoryValue += bundleReader.GetDecimal("BundleInventoryValue");
-                
+
                 if (!bundleReader.IsDBNull("LastBundleCreated"))
                 {
                     var lastBundleCreated = bundleReader.GetDateTime("LastBundleCreated");
@@ -316,7 +415,7 @@ namespace PottaAPI.Services
                 WHERE isActive = 1 
                 ORDER BY categoryName 
                 LIMIT 1";
-            
+
             var categoryResult = await categoryCommand.ExecuteScalarAsync();
             stats.MostPopularCategory = categoryResult?.ToString() ?? "";
 
@@ -339,13 +438,15 @@ namespace PottaAPI.Services
 
             // Single query: LEFT JOIN filters out assembly components in the DB,
             // eliminating the separate GetProductsUsedInAssemblyBundlesAsync() call.
+            // Also LEFT JOIN with Taxes table to get tax information
             var command = connection.CreateCommand();
             command.CommandText = @"
                 SELECT p.productId, p.name, p.sku, p.type, p.description, p.cost, p.salesPrice,
                        p.imagePath, p.inventoryOnHand, p.reorderPoint, p.status, p.taxable,
                        p.taxId, p.createdDate, p.modifiedDate, p.unitOfMeasure, p.categories,
                        p.hasVariations, p.variationCount, p.isIngredient,
-                       p.costPerUnit, p.purchaseUnit, p.recipeUnit, p.conversionFactor, p.purchaseMode
+                       p.costPerUnit, p.purchaseUnit, p.recipeUnit, p.conversionFactor, p.purchaseMode,
+                       t.taxName, t.taxType, t.percentage, t.flatRate
                 FROM Products p
                 LEFT JOIN (
                     SELECT DISTINCT bc.productId
@@ -353,6 +454,7 @@ namespace PottaAPI.Services
                     INNER JOIN BundleItems ba ON bc.bundleId = ba.bundleId
                     WHERE (ba.structure = 'Assembly' OR ba.isRecipe = 1) AND ba.status = 1
                 ) asmb ON asmb.productId = p.productId
+                LEFT JOIN Taxes t ON p.taxId = t.taxId AND t.isActive = 1
                 WHERE p.status = 1 AND asmb.productId IS NULL
                 ORDER BY p.name";
 
@@ -374,12 +476,16 @@ namespace PottaAPI.Services
 
             var command = connection.CreateCommand();
             command.CommandText = @"
-                SELECT productId, name, sku, type, description, cost, salesPrice, imagePath,
-                       inventoryOnHand, reorderPoint, status, taxable, taxId, createdDate, modifiedDate,
-                       unitOfMeasure, categories, hasVariations, variationCount, isIngredient,
-                       costPerUnit, purchaseUnit, recipeUnit, conversionFactor, purchaseMode
-                FROM Products 
-                WHERE productId = @productId AND status = 1";
+                SELECT p.productId, p.name, p.sku, p.type, p.description, p.cost, p.salesPrice, p.imagePath,
+                       p.inventoryOnHand, p.reorderPoint, p.status, p.taxable, p.taxId, p.createdDate, p.modifiedDate,
+                       p.unitOfMeasure, p.categories, p.hasVariations, p.variationCount, p.isIngredient,
+                       p.costPerUnit, p.purchaseUnit, p.recipeUnit, p.conversionFactor, p.purchaseMode,
+                       t.taxId as tax_taxId, t.taxName, t.taxType, t.description as tax_description,
+                       t.percentage, t.flatRate, t.percentageCap, t.isActive as tax_isActive,
+                       t.createdDate as tax_createdDate, t.modifiedDate as tax_modifiedDate
+                FROM Products p
+                LEFT JOIN Taxes t ON p.taxId = t.taxId AND t.isActive = 1
+                WHERE p.productId = @productId AND p.status = 1";
             command.Parameters.AddWithValue("@productId", productId);
 
             using var reader = await command.ExecuteReaderAsync();
@@ -393,12 +499,33 @@ namespace PottaAPI.Services
                     {
                         product.Variations = await GetProductVariationsAsync(productId);
                     }
-                    
+
                     // Load modifiers for this product
                     product.Modifiers = await GetProductModifiersAsync(productId);
-                    
+
                     // Load multi-unit pricing for this product
                     product.UnitPricing = await GetProductUnitPricingAsync(productId);
+
+                    // Populate full Tax object if tax exists
+                    var taxId = SafeGetString(reader, "tax_taxId");
+                    if (!string.IsNullOrEmpty(taxId))
+                    {
+                        product.Tax = new TaxDTO
+                        {
+                            TaxId = taxId,
+                            TaxName = SafeGetString(reader, "taxName"),
+                            TaxType = SafeGetString(reader, "taxType"),
+                            Description = SafeGetString(reader, "tax_description"),
+                            Percentage = (double)SafeGetDecimal(reader, "percentage"),
+                            FlatRate = (double)SafeGetDecimal(reader, "flatRate"),
+                            PercentageCap = reader.IsDBNull(reader.GetOrdinal("percentageCap"))
+                                ? null
+                                : (double?)SafeGetDecimal(reader, "percentageCap"),
+                            IsActive = SafeGetBoolean(reader, "tax_isActive", true),
+                            CreatedDate = reader.GetDateTime("tax_createdDate"),
+                            ModifiedDate = reader.GetDateTime("tax_modifiedDate")
+                        };
+                    }
                 }
                 return product;
             }
@@ -509,7 +636,7 @@ namespace PottaAPI.Services
             {
                 while (await attrReader.ReadAsync())
                 {
-                    var attrId   = attrReader["attributeId"]?.ToString() ?? "";
+                    var attrId = attrReader["attributeId"]?.ToString() ?? "";
                     var attrName = attrReader["attributeName"]?.ToString() ?? "";
 
                     if (!attributeMap.TryGetValue(attrId, out var attr))
@@ -518,7 +645,7 @@ namespace PottaAPI.Services
                         attributeMap[attrId] = attr;
                     }
 
-                    var valueId   = attrReader["valueId"]?.ToString();
+                    var valueId = attrReader["valueId"]?.ToString();
                     var valueName = attrReader["valueName"]?.ToString();
                     if (!string.IsNullOrEmpty(valueId))
                     {
@@ -527,7 +654,7 @@ namespace PottaAPI.Services
                         {
                             attr.Values.Add(new ProductAttributeValueDto
                             {
-                                ValueId   = valueId,
+                                ValueId = valueId,
                                 ValueName = valueName ?? ""
                             });
                         }
@@ -599,6 +726,41 @@ namespace PottaAPI.Services
 
         #endregion
 
+        #region Service Operations
+
+        public async Task<List<ProductDto>> GetAllServicesAsync()
+        {
+            var services = new List<ProductDto>();
+
+            using var connection = new SqliteConnection(_connectionString);
+            await connection.OpenAsync();
+
+            var command = connection.CreateCommand();
+            command.CommandText = @"
+                SELECT p.productId, p.name, p.sku, p.type, p.description, p.cost, p.salesPrice,
+                       p.imagePath, p.inventoryOnHand, p.reorderPoint, p.status, p.taxable,
+                       p.taxId, p.createdDate, p.modifiedDate, p.unitOfMeasure, p.categories,
+                       p.hasVariations, p.variationCount, p.isIngredient,
+                       p.costPerUnit, p.purchaseUnit, p.recipeUnit, p.conversionFactor, p.purchaseMode,
+                       p.hasMultiUnitPricing,
+                       t.taxName, t.taxType, t.percentage, t.flatRate
+                FROM Products p
+                LEFT JOIN Taxes t ON p.taxId = t.taxId AND t.isActive = 1
+                WHERE p.status = 1 AND p.type = 'Service'
+                ORDER BY p.name";
+
+            using var reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                var service = CreateProductFromDataReader(reader);
+                if (service != null) services.Add(service);
+            }
+
+            return services;
+        }
+
+        #endregion
+
         #region Bundle Operations
 
         public async Task<List<BundleDto>> GetAllBundlesAsync()
@@ -613,12 +775,14 @@ namespace PottaAPI.Services
 
             var command = connection.CreateCommand();
             command.CommandText = @"
-                SELECT bundleId, name, sku, structure, description, cost, salesPrice, imagePath,
-                       inventoryOnHand, reorderPoint, status, taxable, taxId, createdDate, modifiedDate,
-                       isRecipe, servingSize, preparationTime, cookingInstructions
-                FROM BundleItems 
-                WHERE status = 1 AND isRecipe = 0
-                ORDER BY name";
+                SELECT b.bundleId, b.name, b.sku, b.structure, b.description, b.cost, b.salesPrice, b.imagePath,
+                       b.inventoryOnHand, b.reorderPoint, b.status, b.taxable, b.taxId, b.createdDate, b.modifiedDate,
+                       b.isRecipe, b.servingSize, b.preparationTime, b.cookingInstructions,
+                       t.taxName, t.taxType, t.percentage, t.flatRate
+                FROM BundleItems b
+                LEFT JOIN Taxes t ON b.taxId = t.taxId AND t.isActive = 1
+                WHERE b.status = 1 AND b.isRecipe = 0
+                ORDER BY b.name";
 
             using var reader = await command.ExecuteReaderAsync();
             while (await reader.ReadAsync())
@@ -638,11 +802,15 @@ namespace PottaAPI.Services
 
             var command = connection.CreateCommand();
             command.CommandText = @"
-                SELECT bundleId, name, sku, structure, description, cost, salesPrice, imagePath,
-                       inventoryOnHand, reorderPoint, status, taxable, taxId, createdDate, modifiedDate,
-                       isRecipe, servingSize, preparationTime, cookingInstructions
-                FROM BundleItems 
-                WHERE bundleId = @bundleId AND status = 1";
+                SELECT b.bundleId, b.name, b.sku, b.structure, b.description, b.cost, b.salesPrice, b.imagePath,
+                       b.inventoryOnHand, b.reorderPoint, b.status, b.taxable, b.taxId, b.createdDate, b.modifiedDate,
+                       b.isRecipe, b.servingSize, b.preparationTime, b.cookingInstructions,
+                       t.taxId as tax_taxId, t.taxName, t.taxType, t.description as tax_description,
+                       t.percentage, t.flatRate, t.percentageCap, t.isActive as tax_isActive,
+                       t.createdDate as tax_createdDate, t.modifiedDate as tax_modifiedDate
+                FROM BundleItems b
+                LEFT JOIN Taxes t ON b.taxId = t.taxId AND t.isActive = 1
+                WHERE b.bundleId = @bundleId AND b.status = 1";
             command.Parameters.AddWithValue("@bundleId", bundleId);
 
             using var reader = await command.ExecuteReaderAsync();
@@ -651,7 +819,32 @@ namespace PottaAPI.Services
                 var bundle = CreateBundleFromDataReader(reader);
                 if (bundle != null)
                 {
+                    // Load components
                     bundle.Components = await GetBundleComponentsAsync(bundleId);
+
+                    // Load modifiers
+                    bundle.Modifiers = await GetBundleModifiersAsync(bundleId);
+
+                    // Populate full Tax object if tax exists
+                    var taxId = SafeGetString(reader, "tax_taxId");
+                    if (!string.IsNullOrEmpty(taxId))
+                    {
+                        bundle.Tax = new TaxDTO
+                        {
+                            TaxId = taxId,
+                            TaxName = SafeGetString(reader, "taxName"),
+                            TaxType = SafeGetString(reader, "taxType"),
+                            Description = SafeGetString(reader, "tax_description"),
+                            Percentage = (double)SafeGetDecimal(reader, "percentage"),
+                            FlatRate = (double)SafeGetDecimal(reader, "flatRate"),
+                            PercentageCap = reader.IsDBNull(reader.GetOrdinal("percentageCap"))
+                                ? null
+                                : (double?)SafeGetDecimal(reader, "percentageCap"),
+                            IsActive = SafeGetBoolean(reader, "tax_isActive", true),
+                            CreatedDate = reader.GetDateTime("tax_createdDate"),
+                            ModifiedDate = reader.GetDateTime("tax_modifiedDate")
+                        };
+                    }
                 }
                 return bundle;
             }
@@ -671,12 +864,14 @@ namespace PottaAPI.Services
 
             var command = connection.CreateCommand();
             command.CommandText = @"
-                SELECT bundleId, name, sku, structure, description, cost, salesPrice, imagePath,
-                       inventoryOnHand, reorderPoint, status, taxable, taxId, createdDate, modifiedDate,
-                       isRecipe, servingSize, preparationTime, cookingInstructions
-                FROM BundleItems 
-                WHERE status = 1 AND isRecipe = 1
-                ORDER BY name";
+                SELECT b.bundleId, b.name, b.sku, b.structure, b.description, b.cost, b.salesPrice, b.imagePath,
+                       b.inventoryOnHand, b.reorderPoint, b.status, b.taxable, b.taxId, b.createdDate, b.modifiedDate,
+                       b.isRecipe, b.servingSize, b.preparationTime, b.cookingInstructions,
+                       t.taxName, t.taxType, t.percentage, t.flatRate
+                FROM BundleItems b
+                LEFT JOIN Taxes t ON b.taxId = t.taxId AND t.isActive = 1
+                WHERE b.status = 1 AND b.isRecipe = 1
+                ORDER BY b.name";
 
             using var reader = await command.ExecuteReaderAsync();
             while (await reader.ReadAsync())
@@ -799,23 +994,23 @@ namespace PottaAPI.Services
         private async Task<HashSet<string>> GetProductsUsedInAssemblyBundlesAsync()
         {
             var assemblyComponentIds = new HashSet<string>();
-            
+
             using var connection = new SqliteConnection(_connectionString);
             await connection.OpenAsync();
-            
+
             var command = connection.CreateCommand();
             command.CommandText = @"
                 SELECT DISTINCT bc.productId
                 FROM BundleComponents bc
                 INNER JOIN BundleItems b ON bc.bundleId = b.bundleId
                 WHERE (b.structure = 'Assembly' OR b.isRecipe = 1) AND b.status = 1";
-            
+
             using var reader = await command.ExecuteReaderAsync();
             while (await reader.ReadAsync())
             {
                 assemblyComponentIds.Add(reader.GetString(0));
             }
-            
+
             return assemblyComponentIds;
         }
 
@@ -879,16 +1074,16 @@ namespace PottaAPI.Services
         {
             if (string.IsNullOrEmpty(path))
                 return string.Empty;
-            
+
             // Replace Windows backslashes with forward slashes
             var urlPath = path.Replace("\\", "/");
-            
+
             // Remove "Images/" prefix if present (case-insensitive)
             if (urlPath.StartsWith("Images/", StringComparison.OrdinalIgnoreCase))
             {
                 urlPath = urlPath.Substring(7); // Remove "Images/" (7 characters)
             }
-            
+
             // Return as API path (will be served from /images endpoint)
             return $"/images/{urlPath}";
         }
@@ -904,12 +1099,12 @@ namespace PottaAPI.Services
                     "Variation" => CreateVariationItemFromDataReader(reader),
                     _ => null
                 };
-                
+
                 if (result == null)
                 {
                     System.Diagnostics.Debug.WriteLine($"CreateItemFromDataReader: Failed to create item of type '{itemType}'");
                 }
-                
+
                 return result;
             }
             catch (Exception ex)
@@ -926,7 +1121,7 @@ namespace PottaAPI.Services
             {
                 var categoriesJson = reader["categories"]?.ToString();
                 var categories = new List<string>();
-                
+
                 if (!string.IsNullOrEmpty(categoriesJson))
                 {
                     try
@@ -950,12 +1145,19 @@ namespace PottaAPI.Services
                     productId = reader["productId"]?.ToString() ?? "";
                 }
 
+                // Extract tax information from LEFT JOIN
+                var taxName = SafeGetString(reader, "taxName");
+                var taxType = SafeGetString(reader, "taxType");
+                var taxRate = taxType == "Percentage"
+                    ? SafeGetDecimal(reader, "percentage")
+                    : SafeGetDecimal(reader, "flatRate");
+
                 return new ProductDto
                 {
                     Id = productId,
                     Name = reader["name"]?.ToString() ?? "",
                     SKU = reader["sku"]?.ToString() ?? "",
-                    Type = "Product",
+                    Type = reader["type"]?.ToString() ?? "Product", // Can be "Product" or "Service"
                     Description = reader["description"]?.ToString() ?? "",
                     Cost = reader.IsDBNull("cost") ? 0 : reader.GetDecimal("cost"),
                     SalesPrice = reader.IsDBNull("salesPrice") ? 0 : reader.GetDecimal("salesPrice"),
@@ -976,7 +1178,12 @@ namespace PottaAPI.Services
                     PurchaseUnit = SafeGetString(reader, "purchaseUnit"),
                     RecipeUnit = SafeGetString(reader, "recipeUnit"),
                     ConversionFactor = SafeGetDecimal(reader, "conversionFactor", 1),
-                    PurchaseMode = SafeGetString(reader, "purchaseMode", "Standard")
+                    PurchaseMode = SafeGetString(reader, "purchaseMode", "Standard"),
+                    HasMultiUnitPricing = SafeGetBoolean(reader, "hasMultiUnitPricing"),
+                    // Tax information
+                    TaxName = taxName,
+                    TaxType = taxType,
+                    TaxRate = taxRate
                 };
             }
             catch (Exception ex)
@@ -1002,6 +1209,13 @@ namespace PottaAPI.Services
                     bundleId = SafeGetString(reader, "bundleId");
                 }
 
+                // Extract tax information from LEFT JOIN
+                var taxName = SafeGetString(reader, "taxName");
+                var taxType = SafeGetString(reader, "taxType");
+                var taxRate = taxType == "Percentage"
+                    ? SafeGetDecimal(reader, "percentage")
+                    : SafeGetDecimal(reader, "flatRate");
+
                 return new BundleDto
                 {
                     Id = bundleId,
@@ -1024,7 +1238,11 @@ namespace PottaAPI.Services
                     IsRecipe = SafeGetBoolean(reader, "isRecipe"),
                     ServingSize = SafeGetInt32(reader, "servingSize", 1),
                     PreparationTime = SafeGetInt32(reader, "preparationTime"),
-                    CookingInstructions = SafeGetString(reader, "cookingInstructions")
+                    CookingInstructions = SafeGetString(reader, "cookingInstructions"),
+                    // Tax information
+                    TaxName = taxName,
+                    TaxType = taxType,
+                    TaxRate = taxRate
                 };
             }
             catch (Exception ex)
@@ -1067,7 +1285,7 @@ namespace PottaAPI.Services
             {
                 var categoriesJson = SafeGetString(reader, "categories");
                 var categories = new List<string>();
-                
+
                 if (!string.IsNullOrEmpty(categoriesJson))
                 {
                     try
@@ -1079,6 +1297,13 @@ namespace PottaAPI.Services
                         categories = new List<string>();
                     }
                 }
+
+                // Extract tax information from LEFT JOIN
+                var taxName = SafeGetString(reader, "taxName");
+                var taxType = SafeGetString(reader, "taxType");
+                var taxRate = taxType == "Percentage"
+                    ? SafeGetDecimal(reader, "percentage")
+                    : SafeGetDecimal(reader, "flatRate");
 
                 return new ItemDto
                 {
@@ -1095,11 +1320,21 @@ namespace PottaAPI.Services
                     TaxId = SafeGetString(reader, "taxId"),
                     CreatedDate = reader.GetDateTime("createdDate"),
                     ModifiedDate = reader.GetDateTime("modifiedDate"),
-                    Categories = categories
+                    Categories = categories,
+                    InventoryOnHand = SafeGetDecimal(reader, "inventoryOnHand"),
+                    HasMultiUnitPricing = SafeGetBoolean(reader, "hasMultiUnitPricing"),
+                    // Tax information
+                    TaxName = taxName,
+                    TaxType = taxType,
+                    TaxRate = taxRate,
+                    // Variation-specific fields
+                    ParentProductId = SafeGetString(reader, "parentProductId"),
+                    AttributeValuesDisplay = SafeGetString(reader, "attributeValuesDisplay")
                 };
             }
-            catch
+            catch (Exception ex)
             {
+                System.Diagnostics.Debug.WriteLine($"CreateVariationItemFromDataReader ERROR: {ex.Message}");
                 return null;
             }
         }
@@ -1207,7 +1442,7 @@ namespace PottaAPI.Services
             productCommand.Parameters.AddWithValue("@productId", productId);
 
             var availableModifiersStr = (await productCommand.ExecuteScalarAsync())?.ToString();
-            
+
             if (string.IsNullOrEmpty(availableModifiersStr))
             {
                 return modifiers; // No modifiers for this product
@@ -1226,7 +1461,84 @@ namespace PottaAPI.Services
 
             // Build parameterized IN clause for modifier IDs
             var placeholders = string.Join(",", modifierIds.Select((_, i) => $"@modId{i}"));
-            
+
+            var command = connection.CreateCommand();
+            command.CommandText = $@"
+                SELECT m.modifierId, m.modifierName, m.priceChange, m.sortOrder, m.status, 
+                       m.createdDate, m.modifiedDate, m.recipeId, m.useRecipePrice,
+                       b.name as recipeName, b.cost as recipeCost
+                FROM Modifiers m
+                LEFT JOIN BundleItems b ON m.recipeId = b.bundleId
+                WHERE m.modifierId IN ({placeholders}) AND m.status = 1
+                ORDER BY m.sortOrder, m.modifierName";
+
+            // Add parameters for each modifier ID
+            for (int i = 0; i < modifierIds.Count; i++)
+            {
+                command.Parameters.AddWithValue($"@modId{i}", modifierIds[i]);
+            }
+
+            using var reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                modifiers.Add(new ModifierDto
+                {
+                    ModifierId = SafeGetString(reader, "modifierId"),
+                    ModifierName = SafeGetString(reader, "modifierName"),
+                    PriceChange = SafeGetDecimal(reader, "priceChange"),
+                    SortOrder = SafeGetInt32(reader, "sortOrder"),
+                    Status = SafeGetBoolean(reader, "status", true),
+                    CreatedDate = reader.GetDateTime("createdDate"),
+                    ModifiedDate = reader.GetDateTime("modifiedDate"),
+                    RecipeId = SafeGetString(reader, "recipeId"),
+                    UseRecipePrice = SafeGetBoolean(reader, "useRecipePrice"),
+                    RecipeName = SafeGetString(reader, "recipeName"),
+                    RecipeCost = SafeGetDecimal(reader, "recipeCost")
+                });
+            }
+
+            return modifiers;
+        }
+
+        /// <summary>
+        /// Get all modifiers associated with a specific bundle
+        /// </summary>
+        public async Task<List<ModifierDto>> GetBundleModifiersAsync(string bundleId)
+        {
+            var modifiers = new List<ModifierDto>();
+
+            using var connection = new SqliteConnection(_connectionString);
+            await connection.OpenAsync();
+
+            // First, get the availableModifiers field from the bundle
+            var bundleCommand = connection.CreateCommand();
+            bundleCommand.CommandText = @"
+                SELECT availableModifiers 
+                FROM BundleItems 
+                WHERE bundleId = @bundleId AND status = 1";
+            bundleCommand.Parameters.AddWithValue("@bundleId", bundleId);
+
+            var availableModifiersStr = (await bundleCommand.ExecuteScalarAsync())?.ToString();
+
+            if (string.IsNullOrEmpty(availableModifiersStr))
+            {
+                return modifiers; // No modifiers for this bundle
+            }
+
+            // Parse the comma-separated modifier IDs
+            var modifierIds = availableModifiersStr.Split(',')
+                .Select(id => id.Trim())
+                .Where(id => !string.IsNullOrEmpty(id))
+                .ToList();
+
+            if (modifierIds.Count == 0)
+            {
+                return modifiers;
+            }
+
+            // Build parameterized IN clause for modifier IDs
+            var placeholders = string.Join(",", modifierIds.Select((_, i) => $"@modId{i}"));
+
             var command = connection.CreateCommand();
             command.CommandText = $@"
                 SELECT m.modifierId, m.modifierName, m.priceChange, m.sortOrder, m.status, 

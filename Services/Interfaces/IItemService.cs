@@ -1,6 +1,6 @@
 using PottaAPI.Models;
 
-namespace PottaAPI.Services
+namespace PottaAPI.Services.Interfaces
 {
     /// <summary>
     /// Interface for item-related database operations (products, bundles, recipes, variations)
@@ -71,6 +71,15 @@ namespace PottaAPI.Services
         /// Get variation by ID
         /// </summary>
         Task<ProductVariationDto?> GetVariationByIdAsync(string variationId);
+
+        #endregion
+
+        #region Service Operations
+
+        /// <summary>
+        /// Get all active services
+        /// </summary>
+        Task<List<ProductDto>> GetAllServicesAsync();
 
         #endregion
 
