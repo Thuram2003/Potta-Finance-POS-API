@@ -14,6 +14,13 @@ using FluentValidation.AspNetCore;
 using Serilog;
 using AspNetCoreRateLimit;
 using PottaAPI.Services.Interfaces;
+using Dapper;
+using PottaAPI.Infrastructure;
+
+// Register Dapper type handlers for SQLite compatibility
+SqlMapper.AddTypeHandler(new JsonListTypeHandler());
+SqlMapper.AddTypeHandler(new DecimalTypeHandler());
+SqlMapper.AddTypeHandler(new NullableDecimalTypeHandler());
 
 Log.Logger = new LoggerConfiguration()
     .WriteTo.Console()
@@ -137,7 +144,17 @@ try
     builder.Services.AddScoped<IDatabaseService, DatabaseService>();
 
     builder.Services.AddScoped<ICustomerService, CustomerService>();
+    
+    // ── Item Services (Dapper-based, separated by domain) ──
+    builder.Services.AddScoped<IProductService, ProductService>();
+    builder.Services.AddScoped<IBundleService, BundleService>();
+    builder.Services.AddScoped<ICategoryService, CategoryService>();
+    builder.Services.AddScoped<IModifierService, ModifierService>();
+    builder.Services.AddScoped<IItemSearchService, ItemSearchService>();
+    
+    // ── Legacy ItemService (kept for backward compatibility if needed) ──
     builder.Services.AddSingleton<IItemService, ItemService>();
+    
     builder.Services.AddScoped<IOrderService, OrderService>();
     builder.Services.AddScoped<ITableService, TableService>();
     builder.Services.AddScoped<IStaffService, StaffService>();

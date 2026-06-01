@@ -35,11 +35,15 @@ namespace PottaAPI.Models
         public string? ParentProductId { get; set; }
         public string? AttributeValuesDisplay { get; set; }
         
+        // Variation parent fields (only populated for products with variations)
+        public virtual bool HasVariations { get; set; }
+        public virtual int VariationCount { get; set; }
+        
         // Multi-unit pricing flag
         public bool HasMultiUnitPricing { get; set; }
         
         // Inventory fields
-        public decimal InventoryOnHand { get; set; }
+        public virtual decimal InventoryOnHand { get; set; }
         public string StockStatus => InventoryOnHand > 0 ? "in-stock" : "out-of-stock";
     }
 
@@ -48,11 +52,9 @@ namespace PottaAPI.Models
     /// </summary>
     public class ProductDto : ItemDto
     {
-        public decimal InventoryOnHand { get; set; }
+        // Product-specific properties (inherited properties: InventoryOnHand, HasVariations, VariationCount)
         public decimal ReorderPoint { get; set; }
         public string UnitOfMeasure { get; set; } = "";
-        public bool HasVariations { get; set; }
-        public int VariationCount { get; set; }
         public bool IsIngredient { get; set; }
         public decimal CostPerUnit { get; set; }
         public string PurchaseUnit { get; set; } = "";
@@ -74,6 +76,7 @@ namespace PottaAPI.Models
     {
         public string VariationId { get; set; } = "";
         public string ParentProductId { get; set; } = "";
+        public string ParentProductName { get; set; } = ""; // Parent product name for display
         public string SKU { get; set; } = "";
         public string Name { get; set; } = "";
         public decimal Cost { get; set; }
@@ -128,7 +131,7 @@ namespace PottaAPI.Models
     public class BundleDto : ItemDto
     {
         public string Structure { get; set; } = "Assembly"; // "Assembly" or "Bundle"
-        public decimal InventoryOnHand { get; set; }
+        // InventoryOnHand is inherited from ItemDto (virtual property)
         public decimal ReorderPoint { get; set; }
         public bool IsRecipe { get; set; }
         public int ServingSize { get; set; } = 1;

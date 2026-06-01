@@ -56,20 +56,23 @@ namespace PottaAPI.Services
             using var connection = new SqliteConnection(_connectionString);
             await connection.OpenAsync();
 
-            // UNION ALL query to get ALL sellable items:
-            // 1. Products (excluding ingredients)
-            // 2. Variations (all active variations)
-            // 3. Bundles (isRecipe = 0)
-            // 4. Recipes (isRecipe = 1)
-            // 5. Services (type = 'Service')
+            // UNION ALL query to get ALL sellable items (EXCLUDING VARIATIONS):
+            // 1. Products (excluding ingredients) - parent items only
+            // 2. Bundles (isRecipe = 0)
+            // 3. Recipes (isRecipe = 1)
+            // 4. Services (type = 'Service')
+            // NOTE: Variations are NOT included in the main list - they must be fetched via /api/items/products/{id}/variations
             var command = connection.CreateCommand();
             command.CommandTimeout = 30;
             command.CommandText = @"
                 -- Products (excluding ingredients, including those in assemblies)
+                -- hasVariations flag indicates if variations should be fetched separately
                 SELECT p.productId as Id, p.name, p.sku, p.type, p.description,
                        p.cost, p.salesPrice, p.imagePath, p.status, p.taxable, p.taxId,
                        p.createdDate, p.modifiedDate, p.inventoryOnHand, p.reorderPoint,
-                       p.unitOfMeasure, p.categories, p.hasVariations, p.variationCount,
+                       p.unitOfMeasure, p.categories,
+                       (SELECT COUNT(*) FROM ProductVariations WHERE parentProductId = p.productId AND status = 1) as variationCount,
+                       CASE WHEN (SELECT COUNT(*) FROM ProductVariations WHERE parentProductId = p.productId AND status = 1) > 0 THEN 1 ELSE 0 END as hasVariations,
                        p.isIngredient, p.costPerUnit, p.purchaseUnit, p.recipeUnit,
                        p.conversionFactor, p.purchaseMode, p.hasMultiUnitPricing,
                        t.taxName, t.taxType, t.percentage, t.flatRate,
@@ -77,22 +80,6 @@ namespace PottaAPI.Services
                 FROM Products p
                 LEFT JOIN Taxes t ON p.taxId = t.taxId AND t.isActive = 1
                 WHERE p.status = 1 AND p.isIngredient = 0
-
-                UNION ALL
-
-                -- Variations (all active variations as standalone items)
-                SELECT v.variationId as Id, v.name, v.sku, 'Variation' as type, '' as description,
-                       v.cost, v.salesPrice, v.imagePath, v.status, 1 as taxable, p.taxId,
-                       v.createdDate, v.modifiedDate, v.inventoryOnHand, v.reorderPoint,
-                       p.unitOfMeasure, p.categories, 0 as hasVariations, 0 as variationCount,
-                       0 as isIngredient, 0 as costPerUnit, '' as purchaseUnit, '' as recipeUnit,
-                       1 as conversionFactor, 'Standard' as purchaseMode, v.hasMultiUnitPricing,
-                       t.taxName, t.taxType, t.percentage, t.flatRate,
-                       v.parentProductId, '' as attributeValuesDisplay
-                FROM ProductVariations v
-                INNER JOIN Products p ON v.parentProductId = p.productId
-                LEFT JOIN Taxes t ON p.taxId = t.taxId AND t.isActive = 1
-                WHERE v.status = 1
 
                 UNION ALL
 
@@ -189,6 +176,7 @@ namespace PottaAPI.Services
             }
 
             // ── Count query ────────────────────────────────────────────────────────────
+            // NOTE: Variations are excluded from count - only parent products and bundles
             var countCmd = connection.CreateCommand();
             countCmd.CommandTimeout = 30;
             countCmd.CommandText = $@"
@@ -197,12 +185,6 @@ namespace PottaAPI.Services
                    FROM Products p
                    WHERE p.status = 1 AND p.isIngredient = 0
                    {productSearchCondition})
-                +
-                  (SELECT COUNT(*)
-                   FROM ProductVariations v
-                   INNER JOIN Products p ON v.parentProductId = p.productId
-                   WHERE v.status = 1
-                   {variationSearchCondition})
                 +
                   (SELECT COUNT(*)
                    FROM BundleItems b
@@ -216,16 +198,19 @@ namespace PottaAPI.Services
             var totalCount = Convert.ToInt32(await countCmd.ExecuteScalarAsync() ?? 0);
 
             // ── Data query: UNION ALL with DB-level LIMIT / OFFSET ─────────────────────
+            // NOTE: Variations are excluded from search results - they must be fetched via /api/items/products/{id}/variations
             var offset = (searchRequest.Page - 1) * searchRequest.PageSize;
 
             var dataCmd = connection.CreateCommand();
             dataCmd.CommandTimeout = 30;
             dataCmd.CommandText = $@"
-                -- Products (including services)
+                -- Products (including services, excluding variations)
                 SELECT p.productId as Id, p.name, p.sku, p.type, p.description,
                        p.cost, p.salesPrice, p.imagePath, p.status, p.taxable, p.taxId,
                        p.createdDate, p.modifiedDate, p.inventoryOnHand, p.reorderPoint,
-                       p.unitOfMeasure, p.categories, p.hasVariations, p.variationCount,
+                       p.unitOfMeasure, p.categories,
+                       (SELECT COUNT(*) FROM ProductVariations WHERE parentProductId = p.productId AND status = 1) as variationCount,
+                       CASE WHEN (SELECT COUNT(*) FROM ProductVariations WHERE parentProductId = p.productId AND status = 1) > 0 THEN 1 ELSE 0 END as hasVariations,
                        p.isIngredient, p.costPerUnit, p.purchaseUnit, p.recipeUnit,
                        p.conversionFactor, p.purchaseMode, p.hasMultiUnitPricing,
                        t.taxName, t.taxType, t.percentage, t.flatRate,
@@ -234,23 +219,6 @@ namespace PottaAPI.Services
                 LEFT JOIN Taxes t ON p.taxId = t.taxId AND t.isActive = 1
                 WHERE p.status = 1 AND p.isIngredient = 0
                 {productSearchCondition}
-
-                UNION ALL
-
-                -- Variations
-                SELECT v.variationId as Id, v.name, v.sku, 'Variation' as type, '' as description,
-                       v.cost, v.salesPrice, v.imagePath, v.status, 1 as taxable, p.taxId,
-                       v.createdDate, v.modifiedDate, v.inventoryOnHand, v.reorderPoint,
-                       p.unitOfMeasure, p.categories, 0 as hasVariations, 0 as variationCount,
-                       0 as isIngredient, 0 as costPerUnit, '' as purchaseUnit, '' as recipeUnit,
-                       1 as conversionFactor, 'Standard' as purchaseMode, v.hasMultiUnitPricing,
-                       t.taxName, t.taxType, t.percentage, t.flatRate,
-                       v.parentProductId, '' as attributeValuesDisplay
-                FROM ProductVariations v
-                INNER JOIN Products p ON v.parentProductId = p.productId
-                LEFT JOIN Taxes t ON p.taxId = t.taxId AND t.isActive = 1
-                WHERE v.status = 1
-                {variationSearchCondition}
 
                 UNION ALL
 
@@ -439,12 +407,15 @@ namespace PottaAPI.Services
             // Single query: LEFT JOIN filters out assembly components in the DB,
             // eliminating the separate GetProductsUsedInAssemblyBundlesAsync() call.
             // Also LEFT JOIN with Taxes table to get tax information
+            // NOTE: Using dynamic calculation for hasVariations/variationCount for consistency with GetAllItemsAsync
             var command = connection.CreateCommand();
             command.CommandText = @"
                 SELECT p.productId, p.name, p.sku, p.type, p.description, p.cost, p.salesPrice,
                        p.imagePath, p.inventoryOnHand, p.reorderPoint, p.status, p.taxable,
                        p.taxId, p.createdDate, p.modifiedDate, p.unitOfMeasure, p.categories,
-                       p.hasVariations, p.variationCount, p.isIngredient,
+                       (SELECT COUNT(*) FROM ProductVariations WHERE parentProductId = p.productId AND status = 1) as variationCount,
+                       CASE WHEN (SELECT COUNT(*) FROM ProductVariations WHERE parentProductId = p.productId AND status = 1) > 0 THEN 1 ELSE 0 END as hasVariations,
+                       p.isIngredient,
                        p.costPerUnit, p.purchaseUnit, p.recipeUnit, p.conversionFactor, p.purchaseMode,
                        t.taxName, t.taxType, t.percentage, t.flatRate
                 FROM Products p
@@ -478,7 +449,10 @@ namespace PottaAPI.Services
             command.CommandText = @"
                 SELECT p.productId, p.name, p.sku, p.type, p.description, p.cost, p.salesPrice, p.imagePath,
                        p.inventoryOnHand, p.reorderPoint, p.status, p.taxable, p.taxId, p.createdDate, p.modifiedDate,
-                       p.unitOfMeasure, p.categories, p.hasVariations, p.variationCount, p.isIngredient,
+                       p.unitOfMeasure, p.categories,
+                       (SELECT COUNT(*) FROM ProductVariations WHERE parentProductId = p.productId AND status = 1) as variationCount,
+                       CASE WHEN (SELECT COUNT(*) FROM ProductVariations WHERE parentProductId = p.productId AND status = 1) > 0 THEN 1 ELSE 0 END as hasVariations,
+                       p.isIngredient,
                        p.costPerUnit, p.purchaseUnit, p.recipeUnit, p.conversionFactor, p.purchaseMode,
                        t.taxId as tax_taxId, t.taxName, t.taxType, t.description as tax_description,
                        t.percentage, t.flatRate, t.percentageCap, t.isActive as tax_isActive,
@@ -544,7 +518,10 @@ namespace PottaAPI.Services
             command.CommandText = @"
                 SELECT productId, name, sku, type, description, cost, salesPrice, imagePath,
                        inventoryOnHand, reorderPoint, status, taxable, taxId, createdDate, modifiedDate,
-                       unitOfMeasure, categories, hasVariations, variationCount, isIngredient,
+                       unitOfMeasure, categories,
+                       (SELECT COUNT(*) FROM ProductVariations WHERE parentProductId = Products.productId AND status = 1) as variationCount,
+                       CASE WHEN (SELECT COUNT(*) FROM ProductVariations WHERE parentProductId = Products.productId AND status = 1) > 0 THEN 1 ELSE 0 END as hasVariations,
+                       isIngredient,
                        costPerUnit, purchaseUnit, recipeUnit, conversionFactor, purchaseMode
                 FROM Products 
                 WHERE status = 1 AND (categoryId = @categoryId OR categories LIKE @categoryPattern)
@@ -576,7 +553,10 @@ namespace PottaAPI.Services
             command.CommandText = @"
                 SELECT productId, name, sku, type, description, cost, salesPrice, imagePath,
                        inventoryOnHand, reorderPoint, status, taxable, taxId, createdDate, modifiedDate,
-                       unitOfMeasure, categories, hasVariations, variationCount, isIngredient,
+                       unitOfMeasure, categories,
+                       (SELECT COUNT(*) FROM ProductVariations WHERE parentProductId = Products.productId AND status = 1) as variationCount,
+                       CASE WHEN (SELECT COUNT(*) FROM ProductVariations WHERE parentProductId = Products.productId AND status = 1) > 0 THEN 1 ELSE 0 END as hasVariations,
+                       isIngredient,
                        costPerUnit, purchaseUnit, recipeUnit, conversionFactor, purchaseMode
                 FROM Products 
                 WHERE status = 1 AND inventoryOnHand < reorderPoint AND reorderPoint > 0
@@ -1242,7 +1222,10 @@ namespace PottaAPI.Services
                     // Tax information
                     TaxName = taxName,
                     TaxType = taxType,
-                    TaxRate = taxRate
+                    TaxRate = taxRate,
+                    // Bundles don't have variations
+                    HasVariations = false,
+                    VariationCount = 0
                 };
             }
             catch (Exception ex)
@@ -1329,7 +1312,10 @@ namespace PottaAPI.Services
                     TaxRate = taxRate,
                     // Variation-specific fields
                     ParentProductId = SafeGetString(reader, "parentProductId"),
-                    AttributeValuesDisplay = SafeGetString(reader, "attributeValuesDisplay")
+                    AttributeValuesDisplay = SafeGetString(reader, "attributeValuesDisplay"),
+                    // Variations don't have sub-variations
+                    HasVariations = false,
+                    VariationCount = 0
                 };
             }
             catch (Exception ex)

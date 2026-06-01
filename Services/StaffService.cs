@@ -229,7 +229,18 @@ namespace PottaAPI.Services
                     var firstName = (string)staff.FirstName ?? "";
                     var lastName = (string)staff.LastName ?? "";
                     var dailyCode = (string)staff.DailyCode ?? "";
-                    var codeGeneratedDate = (DateTime)staff.CodeGeneratedDate;
+                    
+                    // Parse CodeGeneratedDate from string (SQLite stores DATETIME as TEXT)
+                    DateTime codeGeneratedDate;
+                    if (staff.CodeGeneratedDate is string dateString)
+                    {
+                        codeGeneratedDate = DateTime.Parse(dateString);
+                    }
+                    else
+                    {
+                        codeGeneratedDate = (DateTime)staff.CodeGeneratedDate;
+                    }
+                    
                     var expiresAt = codeGeneratedDate.AddHours(CODE_EXPIRY_HOURS);
 
                     var qrData = new StaffQRCodeData

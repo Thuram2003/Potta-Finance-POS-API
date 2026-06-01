@@ -13,11 +13,24 @@ namespace PottaAPI.Controllers
     [Route("api/[controller]")]
     public class ItemsController : ControllerBase
     {
-        private readonly IItemService _itemService;
+        private readonly IProductService _productService;
+        private readonly IBundleService _bundleService;
+        private readonly ICategoryService _categoryService;
+        private readonly IModifierService _modifierService;
+        private readonly IItemSearchService _itemSearchService;
 
-        public ItemsController(IItemService itemService)
+        public ItemsController(
+            IProductService productService,
+            IBundleService bundleService,
+            ICategoryService categoryService,
+            IModifierService modifierService,
+            IItemSearchService itemSearchService)
         {
-            _itemService = itemService;
+            _productService = productService;
+            _bundleService = bundleService;
+            _categoryService = categoryService;
+            _modifierService = modifierService;
+            _itemSearchService = itemSearchService;
         }
 
         #region General Item Operations
@@ -29,8 +42,7 @@ namespace PottaAPI.Controllers
         [HttpPost("cache/invalidate")]
         public ActionResult InvalidateCache()
         {
-            if (_itemService is ItemService svc)
-                svc.InvalidateCache();
+            _itemSearchService.InvalidateCache();
 
             return Ok(new ApiResponseDto<string>
             {
@@ -41,20 +53,22 @@ namespace PottaAPI.Controllers
         }
 
         /// <summary>
-        /// Get all active items (products, bundles, recipes)
+        /// Get all active items (products, bundles, recipes) with pagination
         /// </summary>
         [HttpGet]
-        [ResponseCache(Duration = 60, Location = ResponseCacheLocation.Any, VaryByQueryKeys = new string[] { })]
-        public async Task<ActionResult<ApiResponseDto<List<ItemDto>>>> GetAllItems()
+        [ResponseCache(Duration = 60, Location = ResponseCacheLocation.Any, VaryByQueryKeys = new string[] { "page", "pageSize" })]
+        public async Task<ActionResult<ApiResponseDto<ItemSearchResponseDto>>> GetAllItems(
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 50)
         {
             try
             {
-                var items = await _itemService.GetAllItemsAsync();
-                return Ok(new ApiResponseDto<List<ItemDto>>
+                var result = await _itemSearchService.GetAllItemsPaginatedAsync(page, pageSize);
+                return Ok(new ApiResponseDto<ItemSearchResponseDto>
                 {
                     Success = true,
-                    Message = $"Retrieved {items.Count} items",
-                    Data = items
+                    Message = $"Retrieved {result.Items.Count} items (page {page} of {result.TotalPages})",
+                    Data = result
                 });
             }
             catch (Exception ex)
@@ -77,7 +91,7 @@ namespace PottaAPI.Controllers
         {
             try
             {
-                var item = await _itemService.GetItemByIdAsync(id);
+                var item = await _itemSearchService.GetItemByIdAsync(id);
                 
                 if (item == null)
                 {
@@ -131,7 +145,7 @@ namespace PottaAPI.Controllers
                     PageSize = pageSize
                 };
 
-                var results = await _itemService.SearchItemsAsync(searchRequest);
+                var results = await _itemSearchService.SearchItemsAsync(searchRequest);
 
                 return Ok(new ApiResponseDto<ItemSearchResponseDto>
                 {
@@ -158,7 +172,7 @@ namespace PottaAPI.Controllers
         {
             try
             {
-                var statistics = await _itemService.GetItemStatisticsAsync();
+                var statistics = await _itemSearchService.GetItemStatisticsAsync();
                 return Ok(new ApiResponseDto<ItemStatisticsDto>
                 {
                     Success = true,
@@ -188,7 +202,7 @@ namespace PottaAPI.Controllers
         {
             try
             {
-                var products = await _itemService.GetAllProductsAsync();
+                var products = await _productService.GetAllProductsAsync();
                 return Ok(new ApiResponseDto<List<ProductDto>>
                 {
                     Success = true,
@@ -212,7 +226,7 @@ namespace PottaAPI.Controllers
         {
             try
             {
-                var product = await _itemService.GetProductByIdAsync(id);
+                var product = await _productService.GetProductByIdAsync(id);
                 
                 if (product == null)
                 {
@@ -248,7 +262,7 @@ namespace PottaAPI.Controllers
         {
             try
             {
-                var products = await _itemService.GetProductsByCategoryAsync(categoryId);
+                var products = await _productService.GetProductsByCategoryAsync(categoryId);
                 return Ok(new ApiResponseDto<List<ProductDto>>
                 {
                     Success = true,
@@ -274,7 +288,7 @@ namespace PottaAPI.Controllers
         {
             try
             {
-                var products = await _itemService.GetLowStockProductsAsync();
+                var products = await _productService.GetLowStockProductsAsync();
                 return Ok(new ApiResponseDto<List<ProductDto>>
                 {
                     Success = true,
@@ -302,7 +316,7 @@ namespace PottaAPI.Controllers
         {
             try
             {
-                var result = await _itemService.GetProductVariationsWithAttributesAsync(productId);
+                var result = await _productService.GetProductVariationsWithAttributesAsync(productId);
                 
                 return Ok(new ApiResponseDto<ProductVariationsWithAttributesDto>
                 {
@@ -329,7 +343,7 @@ namespace PottaAPI.Controllers
         {
             try
             {
-                var variation = await _itemService.GetVariationByIdAsync(id);
+                var variation = await _productService.GetVariationByIdAsync(id);
                 
                 if (variation == null)
                 {
@@ -369,7 +383,7 @@ namespace PottaAPI.Controllers
         {
             try
             {
-                var services = await _itemService.GetAllServicesAsync();
+                var services = await _productService.GetAllServicesAsync();
                 return Ok(new ApiResponseDto<List<ProductDto>>
                 {
                     Success = true,
@@ -395,7 +409,7 @@ namespace PottaAPI.Controllers
         {
             try
             {
-                var service = await _itemService.GetProductByIdAsync(id);
+                var service = await _productService.GetProductByIdAsync(id);
                 
                 if (service == null || service.Type != "Service")
                 {
@@ -435,7 +449,7 @@ namespace PottaAPI.Controllers
         {
             try
             {
-                var bundles = await _itemService.GetAllBundlesAsync();
+                var bundles = await _bundleService.GetAllBundlesAsync();
                 return Ok(new ApiResponseDto<List<BundleDto>>
                 {
                     Success = true,
@@ -461,7 +475,7 @@ namespace PottaAPI.Controllers
         {
             try
             {
-                var bundle = await _itemService.GetBundleByIdAsync(id);
+                var bundle = await _bundleService.GetBundleByIdAsync(id);
                 
                 if (bundle == null)
                 {
@@ -497,7 +511,7 @@ namespace PottaAPI.Controllers
         {
             try
             {
-                var recipes = await _itemService.GetAllRecipesAsync();
+                var recipes = await _bundleService.GetAllRecipesAsync();
                 return Ok(new ApiResponseDto<List<BundleDto>>
                 {
                     Success = true,
@@ -527,7 +541,7 @@ namespace PottaAPI.Controllers
         {
             try
             {
-                var categories = await _itemService.GetAllCategoriesAsync();
+                var categories = await _categoryService.GetAllCategoriesAsync();
                 return Ok(new ApiResponseDto<List<CategoryDto>>
                 {
                     Success = true,
@@ -553,7 +567,7 @@ namespace PottaAPI.Controllers
         {
             try
             {
-                var category = await _itemService.GetCategoryByIdAsync(id);
+                var category = await _categoryService.GetCategoryByIdAsync(id);
                 
                 if (category == null)
                 {
@@ -593,7 +607,7 @@ namespace PottaAPI.Controllers
         {
             try
             {
-                var modifiers = await _itemService.GetAllModifiersAsync();
+                var modifiers = await _modifierService.GetAllModifiersAsync();
                 return Ok(new ApiResponseDto<List<ModifierDto>>
                 {
                     Success = true,
@@ -619,7 +633,7 @@ namespace PottaAPI.Controllers
         {
             try
             {
-                var modifier = await _itemService.GetModifierByIdAsync(id);
+                var modifier = await _modifierService.GetModifierByIdAsync(id);
                 
                 if (modifier == null)
                 {
@@ -657,7 +671,7 @@ namespace PottaAPI.Controllers
         {
             try
             {
-                var unitPricing = await _itemService.GetProductUnitPricingAsync(productId);
+                var unitPricing = await _productService.GetProductUnitPricingAsync(productId);
                 return Ok(new ApiResponseDto<List<ProductUnitPricingDto>>
                 {
                     Success = true,
@@ -681,7 +695,7 @@ namespace PottaAPI.Controllers
         {
             try
             {
-                var unitPricing = await _itemService.GetVariationUnitPricingAsync(variationId);
+                var unitPricing = await _productService.GetVariationUnitPricingAsync(variationId);
                 return Ok(new ApiResponseDto<List<ProductUnitPricingDto>>
                 {
                     Success = true,
