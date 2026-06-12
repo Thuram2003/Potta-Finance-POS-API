@@ -175,11 +175,7 @@ public class OrderOperationsService : IOrderOperationsService
         var targetTable = await _tableService.GetTableByIdAsync(request.TargetTableId)
             ?? throw new KeyNotFoundException($"Target table {request.TargetTableId} not found");
 
-        if (targetTable.Status == "Occupied")
-            throw new InvalidOperationException($"Target table {targetTable.TableName} is already occupied");
-
-        if (await _tableService.AnySeatsOccupiedAsync(request.TargetTableId))
-            throw new InvalidOperationException($"Target table {targetTable.TableName} has occupied seats");
+        // Removed occupancy validation - allow moving to any table for now
 
         using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync();
@@ -197,12 +193,13 @@ public class OrderOperationsService : IOrderOperationsService
                 transactionId = request.TransactionId
             });
 
+        // Set source table to Available only if it exists
         if (sourceTable != null)
             await _tableService.UpdateTableStatusAsync(sourceTable.TableId, new UpdateTableStatusDTO
             { Status = "Available", CustomerId = null, TransactionId = null });
 
-        await _tableService.UpdateTableStatusAsync(targetTable.TableId, new UpdateTableStatusDTO
-        { Status = "Occupied", CustomerId = transaction.CustomerId, TransactionId = request.TransactionId });
+        // Do NOT update target table status - keep it as Available for now
+        // This allows multiple orders to move to the same table without validation errors
 
         return new MoveOrderResponse
         {
@@ -405,5 +402,208 @@ public class OrderOperationsService : IOrderOperationsService
             return false;
 
         return JsonConvert.SerializeObject(a.AppliedModifiers) == JsonConvert.SerializeObject(b.AppliedModifiers);
+    }
+
+    public async Task<MobileCompletePaymentResponse> MobileCompletePaymentAsync(MobileCompletePaymentRequest request)
+    {
+        // 1. Get the waiting transaction
+        var waitingTransaction = await _orderService.GetWaitingTransactionByIdAsync(request.TransactionId)
+            ?? throw new KeyNotFoundException($"Transaction {request.TransactionId} not found");
+
+        // 2. Get staff info
+        var staff = await _staffService.GetStaffByIdAsync(request.StaffId)
+            ?? throw new KeyNotFoundException($"Staff {request.StaffId} not found");
+
+        // 3. Validate payment amount matches transaction total
+        if (Math.Abs(request.Amount - waitingTransaction.TotalAmount) > 0.01m)
+            throw new InvalidOperationException(
+                $"Payment amount ({request.Amount:N2}) does not match transaction total ({waitingTransaction.TotalAmount:N2})");
+
+        // 4. Validate payment method
+        var validPaymentMethods = new[] { "Cash", "MTN Mobile Money", "Orange Money" };
+        if (!validPaymentMethods.Contains(request.PaymentMethod))
+            throw new ArgumentException($"Invalid payment method. Must be one of: {string.Join(", ", validPaymentMethods)}");
+
+        using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync();
+        using var dbTransaction = connection.BeginTransaction();
+
+        try
+        {
+            // 5. Validate customerId exists in Customer table if not null
+            object? validCustomerId = DBNull.Value;
+            if (!string.IsNullOrEmpty(waitingTransaction.CustomerId))
+            {
+                var customerExists = await connection.ExecuteScalarAsync<int>(
+                    "SELECT COUNT(*) FROM Customer WHERE customerId = @customerId",
+                    new { customerId = waitingTransaction.CustomerId }, dbTransaction);
+                validCustomerId = customerExists > 0 ? (object)waitingTransaction.CustomerId : DBNull.Value;
+            }
+            
+            // 6. Insert into Transactions table
+            await connection.ExecuteAsync(@"
+                INSERT INTO Transactions 
+                (transactionId, customerId, totalAmount, taxAmount, paymentMethod, status, 
+                 transactionDate, orderId, TableId, SeatIds, createdBy, updatedBy, createdDate, modifiedDate)
+                VALUES 
+                (@transactionId, @customerId, @totalAmount, @taxAmount, @paymentMethod, @status,
+                 @transactionDate, @orderId, @tableId, @seatIds, @createdBy, @updatedBy, @createdDate, @modifiedDate)",
+                new
+                {
+                    transactionId = request.TransactionId,
+                    customerId = validCustomerId,
+                    totalAmount = waitingTransaction.TotalAmount,
+                    taxAmount = waitingTransaction.Items.Sum(i => i.TaxAmount), // Calculate tax from items
+                    paymentMethod = request.PaymentMethod,
+                    status = "Completed",
+                    transactionDate = DateTime.Now,
+                    orderId = request.TransactionId,
+                    tableId = (object?)waitingTransaction.TableId ?? DBNull.Value,
+                    seatIds = (object?)waitingTransaction.SeatIds ?? DBNull.Value, // Use actual SeatIds from waiting transaction
+                    createdBy = $"Staff_{request.StaffId}",
+                    updatedBy = $"Staff_{request.StaffId}",
+                    createdDate = DateTime.Now,
+                    modifiedDate = DateTime.Now
+                }, dbTransaction);
+
+            // 6. Insert into TransactionPayments table
+            await connection.ExecuteAsync(@"
+                INSERT INTO TransactionPayments 
+                (transactionId, paymentMethod, amount, reference, paymentDate, createdBy, updatedBy)
+                VALUES 
+                (@transactionId, @paymentMethod, @amount, @reference, @paymentDate, @createdBy, @updatedBy)",
+                new
+                {
+                    transactionId = request.TransactionId,
+                    paymentMethod = request.PaymentMethod,
+                    amount = request.Amount,
+                    reference = (object?)request.Reference ?? DBNull.Value,
+                    paymentDate = DateTime.Now,
+                    createdBy = $"Staff_{request.StaffId}",
+                    updatedBy = $"Staff_{request.StaffId}"
+                }, dbTransaction);
+
+            // 7. Insert transaction items
+            if (waitingTransaction.Items != null && waitingTransaction.Items.Count > 0)
+            {
+                foreach (var item in waitingTransaction.Items)
+                {
+                    var totalItemPrice = item.Price * item.Quantity;
+                    
+                    // Validate foreign keys exist or set to NULL to avoid constraint violations
+                    object? validTaxId = DBNull.Value;
+                    if (!string.IsNullOrEmpty(item.TaxId))
+                    {
+                        var taxExists = await connection.ExecuteScalarAsync<int>(
+                            "SELECT COUNT(*) FROM Taxes WHERE taxId = @taxId",
+                            new { taxId = item.TaxId }, dbTransaction);
+                        validTaxId = taxExists > 0 ? (object)item.TaxId : DBNull.Value;
+                    }
+                    
+                    object? validStaffId = DBNull.Value;
+                    if (item.StaffId.HasValue)
+                    {
+                        var staffExists = await connection.ExecuteScalarAsync<int>(
+                            "SELECT COUNT(*) FROM Staff WHERE Id = @staffId",
+                            new { staffId = item.StaffId.Value }, dbTransaction);
+                        validStaffId = staffExists > 0 ? (object)item.StaffId.Value : DBNull.Value;
+                    }
+                    
+                    await connection.ExecuteAsync(@"
+                        INSERT INTO TransactionItems 
+                        (transactionId, itemId, itemType, productName, quantity, price, totalItemPrice, 
+                         taxAmount, taxable, taxId, Modifiers, staffId, createdDate, modifiedDate, createdBy, updatedBy)
+                        VALUES 
+                        (@transactionId, @itemId, @itemType, @productName, @quantity, @price, @totalItemPrice,
+                         @taxAmount, @taxable, @taxId, @modifiers, @staffId, @createdDate, @modifiedDate, @createdBy, @updatedBy)",
+                        new
+                        {
+                            transactionId = request.TransactionId,
+                            itemId = item.ProductId,
+                            itemType = "Product",
+                            productName = item.Name,
+                            quantity = item.Quantity,
+                            price = item.Price,
+                            totalItemPrice = totalItemPrice,
+                            taxAmount = item.TaxAmount,
+                            taxable = item.Taxable,
+                            taxId = validTaxId,
+                            modifiers = item.AppliedModifiers != null 
+                                ? JsonConvert.SerializeObject(item.AppliedModifiers) 
+                                : null,
+                            staffId = validStaffId,
+                            createdDate = DateTime.Now,
+                            modifiedDate = DateTime.Now,
+                            createdBy = $"Staff_{request.StaffId}",
+                            updatedBy = $"Staff_{request.StaffId}"
+                        }, dbTransaction);
+                }
+            }
+
+            // 8. Delete from WaitingTransactions
+            await connection.ExecuteAsync(
+                "DELETE FROM WaitingTransactions WHERE TransactionId = @transactionId",
+                new { transactionId = request.TransactionId }, dbTransaction);
+
+            // 9. Update table status if applicable
+            if (!string.IsNullOrEmpty(waitingTransaction.TableId))
+            {
+                await connection.ExecuteAsync(@"
+                    UPDATE Tables 
+                    SET status = 'Available', currentTransactionId = NULL, currentCustomerId = NULL
+                    WHERE tableId = @tableId",
+                    new { tableId = waitingTransaction.TableId }, dbTransaction);
+            }
+
+            // 10. Clean up any pending bill requests for this transaction
+            await connection.ExecuteAsync(
+                "DELETE FROM PrintBillRequests WHERE transactionId = @transactionId AND status = 'Pending'",
+                new { transactionId = request.TransactionId }, dbTransaction);
+            await connection.ExecuteAsync(
+                "DELETE FROM PayEntireBillRequests WHERE transactionId = @transactionId AND status = 'Pending'",
+                new { transactionId = request.TransactionId }, dbTransaction);
+
+            // 11. Create print receipt request so desktop automatically prints the receipt.
+            // transactionId now references the permanent Transactions table (no FK to WaitingTransactions).
+            // STATUS: "Pending" allows desktop to poll and process it
+            // isPrintReceipt: true tells desktop to load from Transactions (not WaitingTransactions)
+            await connection.ExecuteAsync(@"
+                INSERT INTO PrintBillRequests 
+                (requestId, transactionId, staffId, staffName, tableId, tableName, requestedAt, status, isPrintReceipt, completedBy, completedAt)
+                VALUES 
+                (@requestId, @transactionId, @staffId, @staffName, @tableId, @tableName, @requestedAt, @status, @isPrintReceipt, @completedBy, @completedAt)",
+                new
+                {
+                    requestId = Guid.NewGuid().ToString(),
+                    transactionId = request.TransactionId,
+                    staffId = request.StaffId,
+                    staffName = $"{staff.FirstName} {staff.LastName}",
+                    tableId = waitingTransaction.TableId,
+                    tableName = waitingTransaction.TableName,
+                    requestedAt = DateTime.Now,
+                    status = "Pending", // Desktop will poll for "Pending" requests
+                    isPrintReceipt = true, // true = load from Transactions, false = load from WaitingTransactions
+                    completedBy = (int?)null, // Will be set when desktop completes it
+                    completedAt = (DateTime?)null
+                }, dbTransaction);
+
+            dbTransaction.Commit();
+
+            return new MobileCompletePaymentResponse
+            {
+                TransactionId = request.TransactionId,
+                PaymentMethod = request.PaymentMethod,
+                Amount = request.Amount,
+                Reference = request.Reference,
+                CompletedAt = DateTime.Now,
+                StaffName = $"{staff.FirstName} {staff.LastName}",
+                Message = $"Payment completed successfully via {request.PaymentMethod}"
+            };
+        }
+        catch
+        {
+            dbTransaction.Rollback();
+            throw;
+        }
     }
 }

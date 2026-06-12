@@ -379,6 +379,91 @@ namespace PottaAPI.Models
         /// <example>Desktop User</example>
         public string? CompletedBy { get; set; }
     }
+
+    // =============================================
+    // MOBILE PAYMENT DTOs
+    // =============================================
+    
+    /// <summary>
+    /// Request from mobile to complete payment directly (no desktop approval needed)
+    /// </summary>
+    public class MobileCompletePaymentRequest
+    {
+        /// <summary>
+        /// Transaction ID (waiting transaction) to complete
+        /// </summary>
+        /// <example>M20260601123045</example>
+        [Required(ErrorMessage = "Transaction ID is required")]
+        public string TransactionId { get; set; } = string.Empty;
+        
+        /// <summary>
+        /// Staff ID who is processing the payment
+        /// </summary>
+        /// <example>3</example>
+        [Required(ErrorMessage = "Staff ID is required")]
+        public int StaffId { get; set; }
+        
+        /// <summary>
+        /// Payment method: "Cash", "MTN Mobile Money", "Orange Money"
+        /// </summary>
+        /// <example>MTN Mobile Money</example>
+        [Required(ErrorMessage = "Payment method is required")]
+        public string PaymentMethod { get; set; } = string.Empty;
+        
+        /// <summary>
+        /// Payment reference (Instanvi transaction ID for mobile money, optional for cash)
+        /// </summary>
+        /// <example>pay_abc123xyz</example>
+        public string? Reference { get; set; }
+        
+        /// <summary>
+        /// Amount paid (should match transaction total)
+        /// </summary>
+        /// <example>5500</example>
+        [Required(ErrorMessage = "Amount is required")]
+        public decimal Amount { get; set; }
+    }
+    
+    /// <summary>
+    /// Response after mobile completes payment
+    /// </summary>
+    public class MobileCompletePaymentResponse
+    {
+        /// <summary>
+        /// Transaction ID
+        /// </summary>
+        public string TransactionId { get; set; } = string.Empty;
+        
+        /// <summary>
+        /// Payment method used
+        /// </summary>
+        public string PaymentMethod { get; set; } = string.Empty;
+        
+        /// <summary>
+        /// Amount paid
+        /// </summary>
+        public decimal Amount { get; set; }
+        
+        /// <summary>
+        /// Payment reference
+        /// </summary>
+        public string? Reference { get; set; }
+        
+        /// <summary>
+        /// When payment was completed
+        /// </summary>
+        public DateTime CompletedAt { get; set; }
+        
+        /// <summary>
+        /// Staff name who processed payment
+        /// </summary>
+        public string StaffName { get; set; } = string.Empty;
+        
+        /// <summary>
+        /// Success message
+        /// </summary>
+        public string Message { get; set; } = string.Empty;
+    }
 }
 
     // =============================================
@@ -502,6 +587,11 @@ namespace PottaAPI.Models
         /// Optional notes
         /// </summary>
         public string? Notes { get; set; }
+        
+        /// <summary>
+        /// Whether this is a receipt print (true = load from Transactions, false = load from WaitingTransactions)
+        /// </summary>
+        public bool IsPrintReceipt { get; set; } = false;
     }
     
     /// <summary>

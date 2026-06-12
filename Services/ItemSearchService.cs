@@ -211,34 +211,43 @@ namespace PottaAPI.Services
             using var connection = new SqliteConnection(_connectionString);
             await connection.OpenAsync();
 
-            // Build search condition fragments
-            string searchCondition = "";
+            // Build separate search conditions with proper table aliases
+            string productSearchCondition = "";
+            string bundleSearchCondition = "";
             var parameters = new DynamicParameters();
 
             if (!string.IsNullOrWhiteSpace(searchRequest.SearchTerm))
             {
-                searchCondition = @"AND (
-                    name LIKE @searchTerm OR 
-                    sku LIKE @searchTerm OR 
-                    description LIKE @searchTerm OR
-                    categories LIKE @searchTerm
-                )";
+                productSearchCondition = @"AND (
+            p.name LIKE @searchTerm OR 
+            p.sku LIKE @searchTerm OR 
+            p.description LIKE @searchTerm OR
+            p.categories LIKE @searchTerm
+        )";
+
+                bundleSearchCondition = @"AND (
+            b.name LIKE @searchTerm OR 
+            b.sku LIKE @searchTerm OR 
+            b.description LIKE @searchTerm OR
+            b.categories LIKE @searchTerm
+        )";
+
                 parameters.Add("@searchTerm", $"%{searchRequest.SearchTerm}%");
             }
 
-            // Count query
+            // Count query — separate conditions for each subquery
             var countSql = $@"
-                SELECT
-                  (SELECT COUNT(*)
-                   FROM Products p
-                   WHERE p.status = 1 AND p.isIngredient = 0
-                   {searchCondition})
-                +
-                  (SELECT COUNT(*)
-                   FROM BundleItems b
-                   WHERE b.status = 1
-                   {searchCondition})
-                AS totalCount";
+        SELECT
+          (SELECT COUNT(*)
+           FROM Products p
+           WHERE p.status = 1 AND p.isIngredient = 0
+           {productSearchCondition})
+        +
+          (SELECT COUNT(*)
+           FROM BundleItems b
+           WHERE b.status = 1
+           {bundleSearchCondition})
+        AS totalCount";
 
             var totalCount = await connection.ExecuteScalarAsync<int>(countSql, parameters);
 
@@ -248,44 +257,44 @@ namespace PottaAPI.Services
             parameters.Add("@offset", offset);
 
             var dataSql = $@"
-                -- Products (including services, excluding variations)
-                SELECT p.productId as Id, p.name, p.sku, p.type, p.description,
-                       p.cost, p.salesPrice, p.imagePath, p.status, p.taxable, p.taxId,
-                       p.createdDate, p.modifiedDate, p.inventoryOnHand, p.reorderPoint,
-                       p.unitOfMeasure, p.categories,
-                       (SELECT COUNT(*) FROM ProductVariations WHERE parentProductId = p.productId AND status = 1) as variationCount,
-                       CASE WHEN (SELECT COUNT(*) FROM ProductVariations WHERE parentProductId = p.productId AND status = 1) > 0 THEN 1 ELSE 0 END as hasVariations,
-                       p.isIngredient, p.costPerUnit, p.purchaseUnit, p.recipeUnit,
-                       p.conversionFactor, p.purchaseMode, p.hasMultiUnitPricing,
-                       t.taxName, t.taxType, t.percentage, t.flatRate,
-                       NULL as parentProductId, NULL as attributeValuesDisplay
-                FROM Products p
-                LEFT JOIN Taxes t ON p.taxId = t.taxId AND t.isActive = 1
-                WHERE p.status = 1 AND p.isIngredient = 0
-                {searchCondition}
+        -- Products (excluding ingredients)
+        SELECT p.productId as Id, p.name, p.sku, p.type, p.description,
+               p.cost, p.salesPrice, p.imagePath, p.status, p.taxable, p.taxId,
+               p.createdDate, p.modifiedDate, p.inventoryOnHand, p.reorderPoint,
+               p.unitOfMeasure, p.categories,
+               (SELECT COUNT(*) FROM ProductVariations WHERE parentProductId = p.productId AND status = 1) as variationCount,
+               CASE WHEN (SELECT COUNT(*) FROM ProductVariations WHERE parentProductId = p.productId AND status = 1) > 0 THEN 1 ELSE 0 END as hasVariations,
+               p.isIngredient, p.costPerUnit, p.purchaseUnit, p.recipeUnit,
+               p.conversionFactor, p.purchaseMode, p.hasMultiUnitPricing,
+               t.taxName, t.taxType, t.percentage, t.flatRate,
+               NULL as parentProductId, NULL as attributeValuesDisplay
+        FROM Products p
+        LEFT JOIN Taxes t ON p.taxId = t.taxId AND t.isActive = 1
+        WHERE p.status = 1 AND p.isIngredient = 0
+        {productSearchCondition}
 
-                UNION ALL
+        UNION ALL
 
-                -- Bundles and Recipes
-                SELECT b.bundleId as Id, b.name, b.sku,
-                       CASE WHEN b.isRecipe = 1 THEN 'Recipe' ELSE 'Bundle' END as type,
-                       b.description, b.cost, b.salesPrice, b.imagePath, b.status,
-                       b.taxable, b.taxId, b.createdDate, b.modifiedDate,
-                       b.inventoryOnHand, b.reorderPoint,
-                       '' as unitOfMeasure, '' as categories,
-                       0 as hasVariations, 0 as variationCount,
-                       0 as isIngredient, 0 as costPerUnit,
-                       '' as purchaseUnit, '' as recipeUnit,
-                       1 as conversionFactor, 'Standard' as purchaseMode, 0 as hasMultiUnitPricing,
-                       t.taxName, t.taxType, t.percentage, t.flatRate,
-                       NULL as parentProductId, NULL as attributeValuesDisplay
-                FROM BundleItems b
-                LEFT JOIN Taxes t ON b.taxId = t.taxId AND t.isActive = 1
-                WHERE b.status = 1
-                {searchCondition}
+        -- Bundles and Recipes
+        SELECT b.bundleId as Id, b.name, b.sku,
+               CASE WHEN b.isRecipe = 1 THEN 'Recipe' ELSE 'Bundle' END as type,
+               b.description, b.cost, b.salesPrice, b.imagePath, b.status,
+               b.taxable, b.taxId, b.createdDate, b.modifiedDate,
+               b.inventoryOnHand, b.reorderPoint,
+               '' as unitOfMeasure, '' as categories,
+               0 as hasVariations, 0 as variationCount,
+               0 as isIngredient, 0 as costPerUnit,
+               '' as purchaseUnit, '' as recipeUnit,
+               1 as conversionFactor, 'Standard' as purchaseMode, 0 as hasMultiUnitPricing,
+               t.taxName, t.taxType, t.percentage, t.flatRate,
+               NULL as parentProductId, NULL as attributeValuesDisplay
+        FROM BundleItems b
+        LEFT JOIN Taxes t ON b.taxId = t.taxId AND t.isActive = 1
+        WHERE b.status = 1
+        {bundleSearchCondition}
 
-                ORDER BY name
-                LIMIT @pageSize OFFSET @offset";
+        ORDER BY name
+        LIMIT @pageSize OFFSET @offset";
 
             var items = (await connection.QueryAsync<ItemDto>(dataSql, parameters)).ToList();
 

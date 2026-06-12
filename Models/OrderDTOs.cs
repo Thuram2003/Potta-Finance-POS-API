@@ -13,6 +13,7 @@ namespace PottaAPI.Models
     ///   "tableId": "TBL001",
     ///   "tableNumber": 5,
     ///   "tableName": "Table 5",
+    ///   "notes": "Customer requested extra napkins",
     ///   "items": [
     ///     {
     ///       "productId": "PROD001",
@@ -61,6 +62,18 @@ namespace PottaAPI.Models
         /// </summary>
         /// <example>Table 5</example>
         public string? TableName { get; set; }
+
+        /// <summary>
+        /// Comma-separated seat IDs (optional) - For restaurant table seat assignments
+        /// </summary>
+        /// <example>1,2,3</example>
+        public string? SeatIds { get; set; }
+
+        /// <summary>
+        /// Order notes (optional) - Special instructions or customer requests
+        /// </summary>
+        /// <example>Customer requested extra napkins</example>
+        public string? Notes { get; set; }
 
         /// <summary>
         /// List of order items (at least one required)
@@ -270,8 +283,17 @@ namespace PottaAPI.Models
         public int? StaffId { get; set; }
         public string Status { get; set; } = "Pending";
         public string? Notes { get; set; }
+        public string? SeatIds { get; set; }
         public DateTime CreatedDate { get; set; }
         public DateTime ModifiedDate { get; set; }
+
+        // Refire properties
+        public bool IsRefired { get; set; }
+        public string? RefireReason { get; set; }
+        public DateTime? RefiredAt { get; set; }
+        public int? RefiredByStaffId { get; set; }
+        public string? RefiredByStaffName { get; set; }
+        public string? RefiredItemIndices { get; set; }
 
         // Display properties
         public string TableDisplay => !string.IsNullOrEmpty(TableName) 

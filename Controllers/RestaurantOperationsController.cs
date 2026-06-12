@@ -155,6 +155,14 @@ public class RestaurantOperationsController : ControllerBase
             : NotFound(new ErrorResponseDto { Error = "Not found", Details = $"Request {requestId} not found or already processed" });
 
     /// <summary>
+    /// Mobile app completes payment directly (no desktop approval needed)
+    /// Converts waiting transaction to completed transaction with payment info
+    /// </summary>
+    [HttpPost("mobile-complete-payment")]
+    public async Task<ActionResult<MobileCompletePaymentResponse>> MobileCompletePayment([FromBody] MobileCompletePaymentRequest request)
+        => await HandleAsync(() => _orderOps.MobileCompletePaymentAsync(request), request.TransactionId);
+
+    /// <summary>
     /// Remove taxes from an order
     /// </summary>
     [HttpPost("remove-taxes-and-fees")]

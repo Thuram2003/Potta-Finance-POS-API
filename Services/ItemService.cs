@@ -67,7 +67,7 @@ namespace PottaAPI.Services
             command.CommandText = @"
                 -- Products (excluding ingredients, including those in assemblies)
                 -- hasVariations flag indicates if variations should be fetched separately
-                SELECT p.productId as Id, p.name, p.sku, p.type, p.description,
+                SELECT p.productId as Id, p.name, p.sku, p.type, p.description as description,
                        p.cost, p.salesPrice, p.imagePath, p.status, p.taxable, p.taxId,
                        p.createdDate, p.modifiedDate, p.inventoryOnHand, p.reorderPoint,
                        p.unitOfMeasure, p.categories,
@@ -86,7 +86,7 @@ namespace PottaAPI.Services
                 -- Bundles and Recipes
                 SELECT b.bundleId as Id, b.name, b.sku,
                        CASE WHEN b.isRecipe = 1 THEN 'Recipe' ELSE 'Bundle' END as type,
-                       b.description, b.cost, b.salesPrice, b.imagePath, b.status,
+                       b.description as description, b.cost, b.salesPrice, b.imagePath, b.status,
                        b.taxable, b.taxId, b.createdDate, b.modifiedDate,
                        b.inventoryOnHand, b.reorderPoint,
                        '' as unitOfMeasure, '' as categories,
@@ -149,9 +149,7 @@ namespace PottaAPI.Services
             {
                 productSearchCondition = @"AND (
                     p.name LIKE @searchTerm OR 
-                    p.sku  LIKE @searchTerm OR 
-                    p.description LIKE @searchTerm OR
-                    p.categories  LIKE @searchTerm
+                    p.sku  LIKE @searchTerm
                 )";
 
                 variationSearchCondition = @"AND (
@@ -162,8 +160,7 @@ namespace PottaAPI.Services
 
                 bundleSearchCondition = @"AND (
                     b.name LIKE @searchTerm OR 
-                    b.sku  LIKE @searchTerm OR 
-                    b.description LIKE @searchTerm
+                    b.sku  LIKE @searchTerm
                 )";
 
                 parameters.Add(new SqliteParameter("@searchTerm", $"%{searchRequest.SearchTerm}%"));
@@ -205,7 +202,7 @@ namespace PottaAPI.Services
             dataCmd.CommandTimeout = 30;
             dataCmd.CommandText = $@"
                 -- Products (including services, excluding variations)
-                SELECT p.productId as Id, p.name, p.sku, p.type, p.description,
+                SELECT p.productId as Id, p.name as name, p.sku, p.type, p.description as description,
                        p.cost, p.salesPrice, p.imagePath, p.status, p.taxable, p.taxId,
                        p.createdDate, p.modifiedDate, p.inventoryOnHand, p.reorderPoint,
                        p.unitOfMeasure, p.categories,
@@ -223,9 +220,9 @@ namespace PottaAPI.Services
                 UNION ALL
 
                 -- Bundles and Recipes
-                SELECT b.bundleId as Id, b.name, b.sku,
+                SELECT b.bundleId as Id, b.name as name, b.sku,
                        CASE WHEN b.isRecipe = 1 THEN 'Recipe' ELSE 'Bundle' END as type,
-                       b.description, b.cost, b.salesPrice, b.imagePath, b.status,
+                       b.description as description, b.cost, b.salesPrice, b.imagePath, b.status,
                        b.taxable, b.taxId, b.createdDate, b.modifiedDate,
                        b.inventoryOnHand, b.reorderPoint,
                        '' as unitOfMeasure, '' as categories,

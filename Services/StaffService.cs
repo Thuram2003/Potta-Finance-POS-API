@@ -66,12 +66,18 @@ namespace PottaAPI.Services
                 // Generate session token (simple implementation - enhance for production)
                 var sessionToken = GenerateSessionToken(staff.Id, dailyCode);
 
+                // Get organization credentials for Instanvi token
+                var (instanviToken, organizationId, branchId) = await GetOrganizationInfoAsync();
+
                 return new StaffLoginResponse
                 {
                     Success = true,
                     Message = $"Welcome, {staff.FullName}!",
                     Staff = staff,
-                    SessionToken = sessionToken
+                    SessionToken = sessionToken,
+                    InstanviToken = instanviToken,
+                    OrganizationId = organizationId,
+                    BranchId = branchId
                 };
             }
             catch (Exception ex)
@@ -174,6 +180,29 @@ namespace PottaAPI.Services
             {
                 Console.WriteLine($"Error getting staff by code: {ex.Message}");
                 return null;
+            }
+        }
+
+        // Get all active staff members (without daily codes for security)
+        public async Task<List<StaffListDto>> GetAllActiveStaffAsync()
+        {
+            try
+            {
+                using var connection = new SqliteConnection(_connectionString);
+
+                var sql = @"
+                    SELECT Id, FirstName, LastName, Email, Phone, IsActive
+                    FROM Staff 
+                    WHERE IsActive = 1
+                    ORDER BY FirstName, LastName";
+
+                var staff = await connection.QueryAsync<StaffListDto>(sql);
+                return staff.ToList();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error getting all staff: {ex.Message}");
+                return new List<StaffListDto>();
             }
         }
 
@@ -290,6 +319,62 @@ namespace PottaAPI.Services
             var timestamp = DateTime.Now.Ticks;
             var token = $"{staffId}:{dailyCode}:{timestamp}";
             return Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(token));
+        }
+
+        // Get organization info for mobile app (Instanvi token, org ID, branch ID)
+        private async Task<(string? instanviToken, string? organizationId, string? branchId)> GetOrganizationInfoAsync()
+        {
+            try
+            {
+                using var connection = new SqliteConnection(_connectionString);
+
+                var sql = @"
+                    SELECT OrganizationId, AccessToken, BranchId
+                    FROM OrganizationCredentials 
+                    WHERE IsActive = 1 
+                    LIMIT 1";
+
+                var result = await connection.QueryFirstOrDefaultAsync<dynamic>(sql);
+
+                if (result != null)
+                {
+                    string organizationId = result.OrganizationId;
+                    string encryptedToken = result.AccessToken;
+                    string branchId = result.BranchId;
+
+                    // Decrypt the token (it's stored encrypted in the database)
+                    string decryptedToken = DecryptToken(encryptedToken);
+
+                    return (decryptedToken, organizationId, branchId);
+                }
+
+                return (null, null, null);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error getting organization info: {ex.Message}");
+                return (null, null, null);
+            }
+        }
+
+        // Decrypt token (matches desktop's TokenStorageService)
+        private string DecryptToken(string encryptedToken)
+        {
+            if (string.IsNullOrEmpty(encryptedToken))
+                return null;
+
+            try
+            {
+                // Simple Base64 decryption (matches desktop implementation)
+                // In production, use proper encryption with a key
+                var bytes = Convert.FromBase64String(encryptedToken);
+                return System.Text.Encoding.UTF8.GetString(bytes);
+            }
+            catch
+            {
+                // If decryption fails, return as-is (might already be decrypted)
+                return encryptedToken;
+            }
         }
     }
 }

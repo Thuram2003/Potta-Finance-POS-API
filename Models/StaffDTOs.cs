@@ -19,6 +19,9 @@ namespace PottaAPI.Models
         public string Message { get; set; } = string.Empty;
         public StaffDTO? Staff { get; set; }
         public string? SessionToken { get; set; }
+        public string? InstanviToken { get; set; }
+        public string? OrganizationId { get; set; }
+        public string? BranchId { get; set; }
     }
 
     /// <summary>
@@ -36,6 +39,20 @@ namespace PottaAPI.Models
         public DateTime CodeGeneratedDate { get; set; }
         public DateTime CodeExpiresAt { get; set; }
         public bool IsCodeExpired { get; set; }
+        public bool IsActive { get; set; }
+    }
+
+    /// <summary>
+    /// Lightweight DTO for staff list (no daily codes for security)
+    /// </summary>
+    public class StaffListDto
+    {
+        public int Id { get; set; }
+        public string FirstName { get; set; } = string.Empty;
+        public string LastName { get; set; } = string.Empty;
+        public string FullName => $"{FirstName} {LastName}".Trim();
+        public string Email { get; set; } = string.Empty;
+        public string Phone { get; set; } = string.Empty;
         public bool IsActive { get; set; }
     }
 

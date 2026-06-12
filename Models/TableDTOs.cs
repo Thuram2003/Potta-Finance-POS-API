@@ -7,6 +7,24 @@ namespace PottaAPI.Models
     #region Table DTOs
 
     /// <summary>
+    /// Seat occupancy summary embedded in TableDTO.
+    /// Lets mobile render a visual indicator (e.g. "2/4 seats occupied") without a separate call.
+    /// </summary>
+    public class TableSeatSummary
+    {
+        public int TotalSeats { get; set; }
+        public int OccupiedSeats { get; set; }
+        public int AvailableSeats { get; set; }
+        public int ReservedSeats { get; set; }
+
+        // Computed helpers
+        public bool HasSeats => TotalSeats > 0;
+        public bool IsPartiallyOccupied => OccupiedSeats > 0 && OccupiedSeats < TotalSeats;
+        public bool IsFullyOccupied => TotalSeats > 0 && OccupiedSeats == TotalSeats;
+        public string OccupancyDisplay => TotalSeats > 0 ? $"{OccupiedSeats}/{TotalSeats}" : "0/0";
+    }
+
+    /// <summary>
     /// DTO for table information
     /// Mobile use case: Display table details in floor plan
     /// </summary>
@@ -26,6 +44,12 @@ namespace PottaAPI.Models
         public bool IsActive { get; set; }
         public DateTime CreatedDate { get; set; }
         public DateTime ModifiedDate { get; set; }
+
+        /// <summary>
+        /// Seat occupancy summary — use this to show seat indicators on the floor plan
+        /// without needing to call GET /api/tables/{tableId}/seats for every table.
+        /// </summary>
+        public TableSeatSummary SeatSummary { get; set; } = new TableSeatSummary();
 
         // Computed properties
         public string DisplayName => !string.IsNullOrEmpty(TableName) ? TableName : $"Table {TableNumber}";

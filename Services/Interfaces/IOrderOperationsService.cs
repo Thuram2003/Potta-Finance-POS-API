@@ -10,5 +10,6 @@ namespace PottaAPI.Services.Interfaces
         Task<MoveOrderResponse> MoveOrderAsync(MoveOrderRequest request);
         Task<RefireToKitchenResponse> RefireToKitchenAsync(RefireToKitchenRequest request);
         Task<CombineOrdersResponse> CombineOrdersAsync(CombineOrdersRequest request);
+        Task<MobileCompletePaymentResponse> MobileCompletePaymentAsync(MobileCompletePaymentRequest request);
     }
 }
