@@ -6,7 +6,7 @@ using PottaAPI.Services.Interfaces;
 namespace PottaAPI.Controllers
 {
     /// <summary>
-    /// Manage and look up customers. All operations are read-only — customer creation and editing
+    /// Manage and look up customers. All operations are read-only customer creation and editing
     /// are handled by the desktop app. Use these endpoints to populate customer pickers on mobile.
     /// </summary>
     [ApiController]

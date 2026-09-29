@@ -6,7 +6,7 @@ namespace PottaAPI.Validatorsc
     // Validates transaction status updates
     public class UpdateTransactionStatusValidator : AbstractValidator<UpdateTransactionStatusDto>
     {
-        private static readonly string[] ValidStatuses = { "Pending", "Completed", "Cancelled" };
+        private static readonly string[] ValidStatuses = { "Pending", "Completed", "Cancelled", "Ready", "Delayed"};
 
         public UpdateTransactionStatusValidator()
         {

@@ -147,7 +147,7 @@ namespace PottaAPI.Services
 
                 if (result.TotalSeats > 0 && result.TotalSeats != result.OccupiedSeats)
                 {
-                    // Some seats still free — table is partially occupied, keep as Available
+                    // Some seats still free table is partially occupied, keep as Available
                     // so new customers can still be seated at remaining seats
                     statusDto = new UpdateTableStatusDTO
                     {

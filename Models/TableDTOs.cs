@@ -46,7 +46,7 @@ namespace PottaAPI.Models
         public DateTime ModifiedDate { get; set; }
 
         /// <summary>
-        /// Seat occupancy summary — use this to show seat indicators on the floor plan
+        /// Seat occupancy summary use this to show seat indicators on the floor plan
         /// without needing to call GET /api/tables/{tableId}/seats for every table.
         /// </summary>
         public TableSeatSummary SeatSummary { get; set; } = new TableSeatSummary();

@@ -84,7 +84,7 @@ namespace PottaAPI.Services
                     }, dbTransaction);
 
                     // Auto-update seat statuses if seatIds were provided.
-                    // This means the mobile only needs to call POST /api/orders —
+                    // This means the mobile only needs to call POST /api/orders 
                     // no separate seat status calls required.
                     if (!string.IsNullOrEmpty(transaction.SeatIds))
                     {

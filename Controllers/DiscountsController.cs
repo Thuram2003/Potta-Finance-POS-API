@@ -85,7 +85,7 @@ namespace PottaAPI.Controllers
             }
         }
 
-        /// <summary>Record that a discount was applied — increments its usage counter by 1.</summary>
+        /// <summary>Record that a discount was applied increments its usage counter by 1.</summary>
         /// <remarks>Call this after successfully applying a discount to a transaction so usage limits are enforced correctly.</remarks>
         /// <param name="discountId">The discount's unique identifier</param>
         /// <response code="200">Usage count incremented</response>

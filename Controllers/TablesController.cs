@@ -94,10 +94,10 @@ namespace PottaAPI.Controllers
         /// <summary>Change a table's status (Available, Occupied, Reserved, Not Available).</summary>
         /// <remarks>
         /// Single endpoint for all table status transitions. Valid status values:
-        /// - <c>Available</c> — table is free
-        /// - <c>Occupied</c> — customers are seated
-        /// - <c>Reserved</c> — table is booked
-        /// - <c>Not Available</c> — table is out of service
+        /// - <c>Available</c> table is free
+        /// - <c>Occupied</c> customers are seated
+        /// - <c>Reserved</c> table is booked
+        /// - <c>Not Available</c> table is out of service
         ///
         /// Sample request:
         ///

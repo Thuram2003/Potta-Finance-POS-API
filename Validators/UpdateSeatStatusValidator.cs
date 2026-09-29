@@ -22,7 +22,7 @@ namespace PottaAPI.Validators
                 .Must(status => ValidStatuses.Contains(status))
                 .WithMessage($"Status must be one of: {string.Join(", ", ValidStatuses)}");
 
-            // CustomerId is optional — mobile staff select seats before a customer
+            // CustomerId is optional mobile staff select seats before a customer
             // or order is assigned, so it won't always be available.
             RuleFor(x => x.CustomerId)
                 .MaximumLength(50)
