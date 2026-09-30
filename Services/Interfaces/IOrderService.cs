@@ -48,5 +48,19 @@ namespace PottaAPI.Services.Interfaces
         /// </summary>
         Task<bool> UpdateWaitingTransactionItemsAsync(string transactionId, List<WaitingTransactionItemDto> items, int? staffId = null);
 
+        /// <summary>
+        /// Get all online orders from the OnlineOrders table
+        /// </summary>
+        Task<List<OnlineOrderDto>> GetOnlineOrdersAsync(string? status = null);
+
+        /// <summary>
+        /// Get a specific online order by cloud ID or order number
+        /// </summary>
+        Task<OnlineOrderDto?> GetOnlineOrderByIdAsync(string idOrOrderNumber);
+
+        /// <summary>
+        /// Update online order status in the OnlineOrders table
+        /// </summary>
+        Task<bool> UpdateOnlineOrderStatusAsync(string idOrOrderNumber, string status, string? paymentMethod = null, string? note = null);
     }
 }

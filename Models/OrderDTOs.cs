@@ -412,4 +412,42 @@ namespace PottaAPI.Models
 
         public int? StaffId { get; set; }
     }
+
+    /// <summary>
+    /// Online Order DTO representing an order from the OnlineOrders table
+    /// </summary>
+    public class OnlineOrderDto
+    {
+        public string CloudId { get; set; } = "";
+        public string OrderNumber { get; set; } = "";
+        public string Status { get; set; } = "PENDING";
+        public string? PaymentMethod { get; set; }
+        public decimal? Amount { get; set; }
+        public string RawJson { get; set; } = "{}";
+        public string? StockAppliedAt { get; set; }
+        public string? StockReversedAt { get; set; }
+        public string UpdatedAt { get; set; } = "";
+
+        // Parsed convenience properties
+        public string? CustomerName { get; set; }
+        public string? CustomerPhone { get; set; }
+        public string? DeliveryAddress { get; set; }
+        public string? DeliveryQuarter { get; set; }
+        public string? DeliveryLandmark { get; set; }
+        public string? DeliveryNotes { get; set; }
+        public bool IsDelivery { get; set; }
+        public bool IsPaid { get; set; }
+        public List<WaitingTransactionItemDto> Items { get; set; } = new();
+    }
+
+    /// <summary>
+    /// Request to update an online order status
+    /// </summary>
+    public class UpdateOnlineOrderStatusDto
+    {
+        [Required(ErrorMessage = "Status is required")]
+        public string Status { get; set; } = "";
+        public string? PaymentMethod { get; set; }
+        public string? Note { get; set; }
+    }
 }

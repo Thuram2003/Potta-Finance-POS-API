@@ -469,5 +469,133 @@ namespace PottaAPI.Controllers
                 });
             }
         }
+
+        /// <summary>
+        /// Get all online catalogue orders from the OnlineOrders table
+        /// GET /api/orders/online
+        /// </summary>
+        [HttpGet("online")]
+        public async Task<ActionResult<ApiResponseDto<List<OnlineOrderDto>>>> GetOnlineOrders([FromQuery] string? status = null)
+        {
+            try
+            {
+                var orders = await _orderService.GetOnlineOrdersAsync(status);
+                return Ok(new ApiResponseDto<List<OnlineOrderDto>>
+                {
+                    Success = true,
+                    Message = $"Retrieved {orders.Count} online orders",
+                    Data = orders
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new ErrorResponseDto
+                {
+                    Error = "Failed to retrieve online orders",
+                    Details = ex.Message
+                });
+            }
+        }
+
+        /// <summary>
+        /// Get a specific online catalogue order by cloud ID or order number
+        /// GET /api/orders/online/{id}
+        /// </summary>
+        [HttpGet("online/{id}")]
+        public async Task<ActionResult<ApiResponseDto<OnlineOrderDto>>> GetOnlineOrderById(string id)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(id))
+                {
+                    return BadRequest(new ErrorResponseDto
+                    {
+                        Error = "Order ID is required",
+                        Details = "ID cannot be empty"
+                    });
+                }
+
+                var order = await _orderService.GetOnlineOrderByIdAsync(id);
+                if (order == null)
+                {
+                    return NotFound(new ErrorResponseDto
+                    {
+                        Error = "Online order not found",
+                        Details = $"No online order found with ID or Order Number: {id}"
+                    });
+                }
+
+                return Ok(new ApiResponseDto<OnlineOrderDto>
+                {
+                    Success = true,
+                    Message = "Online order retrieved successfully",
+                    Data = order
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new ErrorResponseDto
+                {
+                    Error = "Failed to retrieve online order",
+                    Details = ex.Message
+                });
+            }
+        }
+
+        /// <summary>
+        /// Update status of an online catalogue order
+        /// PUT /api/orders/online/{id}/status
+        /// </summary>
+        [HttpPut("online/{id}/status")]
+        public async Task<ActionResult<ApiResponseDto<bool>>> UpdateOnlineOrderStatus(
+            string id,
+            [FromBody] UpdateOnlineOrderStatusDto request)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(id))
+                {
+                    return BadRequest(new ErrorResponseDto
+                    {
+                        Error = "Order ID is required",
+                        Details = "ID cannot be empty"
+                    });
+                }
+
+                if (string.IsNullOrWhiteSpace(request?.Status))
+                {
+                    return BadRequest(new ErrorResponseDto
+                    {
+                        Error = "Status is required",
+                        Details = "Status field cannot be empty"
+                    });
+                }
+
+                var success = await _orderService.UpdateOnlineOrderStatusAsync(id, request.Status, request.PaymentMethod, request.Note);
+                if (!success)
+                {
+                    return NotFound(new ErrorResponseDto
+                    {
+                        Error = "Online order not found",
+                        Details = $"No online order found with ID or Order Number: {id}"
+                    });
+                }
+
+                return Ok(new ApiResponseDto<bool>
+                {
+                    Success = true,
+                    Message = $"Online order {id} status updated to {request.Status}",
+                    Data = true
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new ErrorResponseDto
+                {
+                    Error = "Failed to update online order status",
+                    Details = ex.Message
+                });
+            }
+        }
     }
 }

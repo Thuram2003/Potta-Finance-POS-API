@@ -4,10 +4,11 @@
 		<Nullable>enable</Nullable>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<!-- Stamped by BUILD-INSTALLER.bat via -p:APP_VERSION=... -->
-		<APP_VERSION Condition="'$(APP_VERSION)'==''">1.3.4.5</APP_VERSION>
+		<APP_VERSION Condition="'$(APP_VERSION)'==''">1.3.6.2</APP_VERSION>
 		<Version>$(APP_VERSION)</Version>
 		<AssemblyVersion>$(APP_VERSION)</AssemblyVersion>
 		<FileVersion>$(APP_VERSION)</FileVersion>
+		<RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
 		<!-- Generate XML docs so Swagger can pick up /// comments -->
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
 		<NoWarn>$(NoWarn);1591</NoWarn>
