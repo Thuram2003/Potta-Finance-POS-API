@@ -61,6 +61,6 @@ namespace PottaAPI.Services.Interfaces
         /// <summary>
         /// Update online order status in the OnlineOrders table
         /// </summary>
-        Task<bool> UpdateOnlineOrderStatusAsync(string idOrOrderNumber, string status, string? paymentMethod = null, string? note = null);
+        Task<bool> UpdateOnlineOrderStatusAsync(string idOrOrderNumber, string status, string? paymentMethod = null, string? note = null, string? orderStatus = null);
     }
 }

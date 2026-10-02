@@ -215,20 +215,19 @@ namespace PottaAPI.Services
                                 continue;
 
                             string tableName = o.IsDelivery ? "Online Delivery" : "Online Pickup";
-                            string notes = $"[ONLINE {(o.IsDelivery ? "DELIVERY" : "PICKUP")}] [{(o.IsPaid ? "PAID" : "UNPAID")}]";
-                            if (!string.IsNullOrEmpty(o.CustomerName)) notes += $"\nCustomer: {o.CustomerName}";
-                            if (!string.IsNullOrEmpty(o.CustomerPhone)) notes += $" ({o.CustomerPhone})";
-                            if (!string.IsNullOrEmpty(o.DeliveryAddress)) notes += $"\nAddress: {o.DeliveryAddress}";
-                            if (!string.IsNullOrEmpty(o.DeliveryLandmark)) notes += $"\nLandmark: {o.DeliveryLandmark}";
-                            if (!string.IsNullOrEmpty(o.DeliveryNotes)) notes += $"\nInstructions: {o.DeliveryNotes}";
 
                             var onlineTx = new WaitingTransactionDto
                             {
                                 TransactionId = webTxId,
-                                CustomerId = o.CustomerPhone,
+                                CustomerId = null,
+                                CustomerName = !string.IsNullOrWhiteSpace(o.CustomerName) && !o.CustomerName.Equals("Online Customer", StringComparison.OrdinalIgnoreCase) ? o.CustomerName : "Online Customer",
+                                CustomerPhone = null, // Kitchen does not know customer phone number
+                                DeliveryAddress = o.IsDelivery && IsRealAddress(o.DeliveryAddress) ? o.DeliveryAddress : null,
+                                IsOnlineOrder = true,
+                                IsDelivery = o.IsDelivery,
                                 TableName = tableName,
                                 Status = o.Status,
-                                Notes = notes,
+                                Notes = null, // Do not add synthetic [ONLINE PICKUP] [UNPAID] notes to KDS
                                 CreatedDate = DateTime.TryParse(o.UpdatedAt, out var dt) ? dt : DateTime.Now,
                                 ModifiedDate = DateTime.Now,
                                 Items = o.Items
@@ -354,6 +353,21 @@ namespace PottaAPI.Services
                     TransactionId = transactionId
                 });
 
+                // Also sync status on matching OnlineOrders if present
+                try
+                {
+                    var cleanNum = transactionId.StartsWith("web_", StringComparison.OrdinalIgnoreCase) 
+                        ? transactionId.Substring(4) 
+                        : transactionId;
+
+                    await connection.ExecuteAsync(@"
+                        UPDATE OnlineOrders 
+                        SET order_status = @Status, updated_at = @UpdatedAt
+                        WHERE order_number = @Num OR cloud_id = @Num OR order_number = @TxId OR cloud_id = @TxId",
+                        new { Status = status, Num = cleanNum, TxId = transactionId, UpdatedAt = DateTime.UtcNow.ToString("o") });
+                }
+                catch { }
+
                 Console.WriteLine($"✅ Transaction status updated to '{status}' (ID: {transactionId}). Rows affected: {simpleResult}");
                 return simpleResult > 0;
             }
@@ -402,6 +416,30 @@ namespace PottaAPI.Services
                     "DELETE FROM WaitingTransactions WHERE TransactionId = @id",
                     new { id = transactionId },
                     transaction);
+
+                // Also mark matching OnlineOrders as COMPLETED if present
+                try
+                {
+                    var cleanNum = transactionId.StartsWith("web_", StringComparison.OrdinalIgnoreCase) 
+                        ? transactionId.Substring(4) 
+                        : transactionId;
+
+                    var onlineUpdated = await connection.ExecuteAsync(@"
+                        UPDATE OnlineOrders 
+                        SET status = 'COMPLETED', order_status = 'Completed', updated_at = @UpdatedAt
+                        WHERE order_number = @Num OR cloud_id = @Num OR order_number = @TxId OR cloud_id = @TxId",
+                        new { Num = cleanNum, TxId = transactionId, UpdatedAt = DateTime.UtcNow.ToString("o") },
+                        transaction);
+
+                    if (onlineUpdated > 0)
+                    {
+                        deleted = Math.Max(deleted, onlineUpdated);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"⚠️ Note on online order completion sync: {ex.Message}");
+                }
 
                 // 5. Update table status if this was the last order on the table
                 if (deleted > 0 && !string.IsNullOrEmpty(tableId))
@@ -528,13 +566,42 @@ namespace PottaAPI.Services
             }
         }
 
+        private static async Task EnsureOnlineOrdersOrderStatusColumnAsync(SqliteConnection connection)
+        {
+            try
+            {
+                var pragmaSql = "PRAGMA table_info(OnlineOrders);";
+                var columns = await connection.QueryAsync<dynamic>(pragmaSql);
+                bool hasCol = false;
+                foreach (var col in columns)
+                {
+                    string name = (string)col.name;
+                    if (string.Equals(name, "order_status", StringComparison.OrdinalIgnoreCase))
+                    {
+                        hasCol = true;
+                        break;
+                    }
+                }
+                if (!hasCol)
+                {
+                    await connection.ExecuteAsync("ALTER TABLE OnlineOrders ADD COLUMN order_status TEXT DEFAULT 'Pending';");
+                }
+            }
+            catch { }
+        }
+
         public async Task<List<OnlineOrderDto>> GetOnlineOrdersAsync(string? status = null)
         {
             var orders = new List<OnlineOrderDto>();
             try
             {
+                using var connection = new SqliteConnection(_connectionString);
+                await connection.OpenAsync();
+                await EnsureOnlineOrdersOrderStatusColumnAsync(connection);
+
                 var sql = @"
                     SELECT cloud_id AS CloudId, order_number AS OrderNumber, status AS Status,
+                           order_status AS OrderStatus,
                            payment_method AS PaymentMethod, amount AS Amount, raw_json AS RawJson,
                            stock_applied_at AS StockAppliedAt, stock_reversed_at AS StockReversedAt,
                            updated_at AS UpdatedAt
@@ -542,13 +609,10 @@ namespace PottaAPI.Services
 
                 if (!string.IsNullOrEmpty(status))
                 {
-                    sql += " WHERE status = @Status";
+                    sql += " WHERE status = @Status OR order_status = @Status";
                 }
 
                 sql += " ORDER BY updated_at DESC";
-
-                using var connection = new SqliteConnection(_connectionString);
-                await connection.OpenAsync();
 
                 var results = await connection.QueryAsync<dynamic>(sql, !string.IsNullOrEmpty(status) ? new { Status = status } : null);
 
@@ -581,17 +645,19 @@ namespace PottaAPI.Services
         {
             try
             {
+                using var connection = new SqliteConnection(_connectionString);
+                await connection.OpenAsync();
+                await EnsureOnlineOrdersOrderStatusColumnAsync(connection);
+
                 var sql = @"
                     SELECT cloud_id AS CloudId, order_number AS OrderNumber, status AS Status,
+                           order_status AS OrderStatus,
                            payment_method AS PaymentMethod, amount AS Amount, raw_json AS RawJson,
                            stock_applied_at AS StockAppliedAt, stock_reversed_at AS StockReversedAt,
                            updated_at AS UpdatedAt
                     FROM OnlineOrders
                     WHERE cloud_id = @Id OR order_number = @Id
                     LIMIT 1";
-
-                using var connection = new SqliteConnection(_connectionString);
-                await connection.OpenAsync();
 
                 var row = await connection.QueryFirstOrDefaultAsync<dynamic>(sql, new { Id = idOrOrderNumber });
                 if (row != null)
@@ -606,23 +672,35 @@ namespace PottaAPI.Services
             return null;
         }
 
-        public async Task<bool> UpdateOnlineOrderStatusAsync(string idOrOrderNumber, string status, string? paymentMethod = null, string? note = null)
+        public async Task<bool> UpdateOnlineOrderStatusAsync(string idOrOrderNumber, string status, string? paymentMethod = null, string? note = null, string? orderStatus = null)
         {
             try
             {
+                if (string.IsNullOrEmpty(orderStatus))
+                {
+                    var u = status.ToUpperInvariant();
+                    if (u == "READY") orderStatus = "Ready";
+                    else if (u == "DELAYED") orderStatus = "Delayed";
+                    else if (u == "COMPLETED" || u == "FULFILLED" || u == "DELIVERED") orderStatus = "Completed";
+                    else if (u == "CANCELLED" || u == "REJECTED") orderStatus = "Cancelled";
+                }
+
                 var sql = @"
                     UPDATE OnlineOrders 
                     SET status = @Status, 
-                        updated_at = @UpdatedAt
-                        " + (!string.IsNullOrEmpty(paymentMethod) ? ", payment_method = @PaymentMethod" : "") + @"
+                        updated_at = @UpdatedAt" +
+                        (!string.IsNullOrEmpty(orderStatus) ? ", order_status = @OrderStatus" : "") +
+                        (!string.IsNullOrEmpty(paymentMethod) ? ", payment_method = @PaymentMethod" : "") + @"
                     WHERE cloud_id = @Id OR order_number = @Id";
 
                 using var connection = new SqliteConnection(_connectionString);
                 await connection.OpenAsync();
+                await EnsureOnlineOrdersOrderStatusColumnAsync(connection);
 
                 int result = await connection.ExecuteAsync(sql, new
                 {
                     Status = status,
+                    OrderStatus = orderStatus,
                     UpdatedAt = DateTime.UtcNow.ToString("o"),
                     PaymentMethod = paymentMethod,
                     Id = idOrOrderNumber
@@ -638,7 +716,7 @@ namespace PottaAPI.Services
 
                     await connection.ExecuteAsync(updateWaitingSql, new
                     {
-                        Status = status,
+                        Status = !string.IsNullOrEmpty(orderStatus) ? orderStatus : status,
                         ModifiedDate = DateTime.Now.ToString("o"),
                         TxId = idOrOrderNumber,
                         WebTxId = $"web_{idOrOrderNumber}"
@@ -649,7 +727,7 @@ namespace PottaAPI.Services
                     Console.WriteLine($"⚠️ Note on waiting transaction status sync: {ex.Message}");
                 }
 
-                Console.WriteLine($"✅ Online order {idOrOrderNumber} status updated to {status}");
+                Console.WriteLine($"✅ Online order {idOrOrderNumber} status updated to {status} (orderStatus: {orderStatus})");
                 return result > 0;
             }
             catch (Exception ex)
@@ -661,11 +739,35 @@ namespace PottaAPI.Services
 
         private OnlineOrderDto ParseOnlineOrderRow(dynamic row)
         {
+            var rawStatus = (string)row.Status ?? "PENDING";
+            var rawOrderStatus = row.OrderStatus != null ? (string)row.OrderStatus : null;
+
+            string orderStatus = "Pending";
+            if (!string.IsNullOrEmpty(rawOrderStatus))
+            {
+                var u = rawOrderStatus.ToUpperInvariant();
+                if (u == "READY") orderStatus = "Ready";
+                else if (u == "DELAYED") orderStatus = "Delayed";
+                else if (u == "COMPLETED" || u == "DELIVERED" || u == "FULFILLED") orderStatus = "Completed";
+                else if (u == "CANCELLED" || u == "REJECTED") orderStatus = "Cancelled";
+                else orderStatus = "Pending";
+            }
+            else
+            {
+                var u = rawStatus.ToUpperInvariant();
+                if (u == "READY") orderStatus = "Ready";
+                else if (u == "DELAYED") orderStatus = "Delayed";
+                else if (u == "COMPLETED" || u == "DELIVERED" || u == "FULFILLED") orderStatus = "Completed";
+                else if (u == "CANCELLED" || u == "REJECTED") orderStatus = "Cancelled";
+                else orderStatus = "Pending";
+            }
+
             var dto = new OnlineOrderDto
             {
                 CloudId = (string)row.CloudId ?? "",
                 OrderNumber = (string)row.OrderNumber ?? "",
-                Status = (string)row.Status ?? "PENDING",
+                Status = rawStatus,
+                OrderStatus = orderStatus,
                 PaymentMethod = row.PaymentMethod != null ? (string)row.PaymentMethod : null,
                 Amount = row.Amount != null ? Convert.ToDecimal(row.Amount) : null,
                 RawJson = (string)row.RawJson ?? "{}",
@@ -711,7 +813,7 @@ namespace PottaAPI.Services
                     }
                 }
 
-                string[] objKeys = { "customer", "user", "client", "buyer", "contact", "recipient", "shipping_address", "delivery_info", "delivery_address", "metadata" };
+                string[] objKeys = { "customerData", "customer_data", "customer", "user", "client", "buyer", "contact", "recipient", "shipping_address", "delivery_info", "delivery_address", "metadata" };
                 foreach (var ok in objKeys)
                 {
                     if (root.TryGetProperty(ok, out var objElem) && objElem.ValueKind == JsonValueKind.Object)
@@ -723,6 +825,7 @@ namespace PottaAPI.Services
                         if (string.IsNullOrEmpty(dto.CustomerName) && objElem.TryGetProperty("full_name", out var fn) && fn.ValueKind == JsonValueKind.String && !fn.GetString().Equals("Online Customer", StringComparison.OrdinalIgnoreCase)) dto.CustomerName = fn.GetString();
                         if (string.IsNullOrEmpty(dto.CustomerName) && objElem.TryGetProperty("recipient_name", out var rn) && rn.ValueKind == JsonValueKind.String) dto.CustomerName = rn.GetString();
                         if (string.IsNullOrEmpty(dto.CustomerName) && objElem.TryGetProperty("customer_name", out var cn2) && cn2.ValueKind == JsonValueKind.String) dto.CustomerName = cn2.GetString();
+                        if (string.IsNullOrEmpty(dto.CustomerName) && objElem.TryGetProperty("company_name", out var cmpn) && cmpn.ValueKind == JsonValueKind.String) dto.CustomerName = cmpn.GetString();
                         if (string.IsNullOrEmpty(dto.CustomerName))
                         {
                             string f = objElem.TryGetProperty("first_name", out var fnm) && fnm.ValueKind == JsonValueKind.String ? fnm.GetString() : "";
@@ -741,63 +844,150 @@ namespace PottaAPI.Services
 
                 if (string.IsNullOrWhiteSpace(dto.CustomerName) && !string.IsNullOrWhiteSpace(dto.CustomerPhone))
                 {
-                    dto.CustomerName = $"Customer ({dto.CustomerPhone})";
+                    dto.CustomerName = "Online Customer";
                 }
 
                 // 2. Delivery address info
-                if (root.TryGetProperty("delivery_address", out var addrElem))
+                // Check customer object in root
+                if (root.TryGetProperty("customer", out var custObj) && custObj.ValueKind == JsonValueKind.Object)
+                {
+                    string? addr = null;
+                    if (custObj.TryGetProperty("address", out var ca))
+                    {
+                        if (ca.ValueKind == JsonValueKind.String) addr = ca.GetString();
+                        else if (ca.ValueKind == JsonValueKind.Object && ca.TryGetProperty("street", out var st) && st.ValueKind == JsonValueKind.String) addr = st.GetString();
+                    }
+
+                    string? quarter = custObj.TryGetProperty("quarter", out var q) && q.ValueKind == JsonValueKind.String ? q.GetString() : null;
+                    string? city = custObj.TryGetProperty("city", out var c) && c.ValueKind == JsonValueKind.String ? c.GetString() : null;
+                    string? region = custObj.TryGetProperty("region", out var r) && r.ValueKind == JsonValueKind.String ? r.GetString() : null;
+
+                    var parts = new List<string>();
+                    if (IsRealAddress(addr)) parts.Add(addr!.Trim());
+                    if (IsRealAddress(quarter) && (addr == null || addr.IndexOf(quarter!, StringComparison.OrdinalIgnoreCase) < 0)) parts.Add(quarter!.Trim());
+                    if (IsRealAddress(city) && (addr == null || addr.IndexOf(city!, StringComparison.OrdinalIgnoreCase) < 0)) parts.Add(city!.Trim());
+                    if (IsRealAddress(region) && (city == null || !region!.Equals(city, StringComparison.OrdinalIgnoreCase)) && (addr == null || addr.IndexOf(region!, StringComparison.OrdinalIgnoreCase) < 0)) parts.Add(region!.Trim());
+
+                    if (parts.Count > 0)
+                    {
+                        dto.DeliveryAddress = string.Join(", ", parts);
+                    }
+                }
+
+                if (string.IsNullOrEmpty(dto.DeliveryAddress) && root.TryGetProperty("delivery_address", out var addrElem))
                 {
                     if (addrElem.ValueKind == JsonValueKind.Object)
                     {
                         var parts = new List<string>();
-                        if (addrElem.TryGetProperty("quarter", out var q) && q.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(q.GetString())) parts.Add(q.GetString());
-                        if (addrElem.TryGetProperty("address", out var a) && a.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(a.GetString())) parts.Add(a.GetString());
-                        if (addrElem.TryGetProperty("city", out var c) && c.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(c.GetString())) parts.Add(c.GetString());
+                        if (addrElem.TryGetProperty("address", out var a) && a.ValueKind == JsonValueKind.String && IsRealAddress(a.GetString())) parts.Add(a.GetString()!.Trim());
+                        if (addrElem.TryGetProperty("quarter", out var q) && q.ValueKind == JsonValueKind.String && IsRealAddress(q.GetString())) parts.Add(q.GetString()!.Trim());
+                        if (addrElem.TryGetProperty("city", out var c) && c.ValueKind == JsonValueKind.String && IsRealAddress(c.GetString())) parts.Add(c.GetString()!.Trim());
                         if (parts.Count > 0) dto.DeliveryAddress = string.Join(", ", parts);
 
                         if (addrElem.TryGetProperty("quarter", out var qv) && qv.ValueKind == JsonValueKind.String) dto.DeliveryQuarter = qv.GetString();
                         if (addrElem.TryGetProperty("landmark", out var l) && l.ValueKind == JsonValueKind.String) dto.DeliveryLandmark = l.GetString();
                         if (addrElem.TryGetProperty("directions", out var d) && d.ValueKind == JsonValueKind.String) dto.DeliveryNotes = d.GetString();
+                        if (addrElem.TryGetProperty("notes", out var n) && n.ValueKind == JsonValueKind.String) dto.DeliveryNotes = n.GetString();
                         if (addrElem.TryGetProperty("recipient_phone", out var rp) && string.IsNullOrEmpty(dto.CustomerPhone))
                             dto.CustomerPhone = rp.GetString();
                     }
-                    else if (addrElem.ValueKind == JsonValueKind.String)
+                    else if (addrElem.ValueKind == JsonValueKind.String && IsRealAddress(addrElem.GetString()))
                     {
-                        dto.DeliveryAddress = addrElem.GetString();
+                        dto.DeliveryAddress = addrElem.GetString()!.Trim();
                     }
                 }
 
                 if (string.IsNullOrEmpty(dto.DeliveryAddress))
                 {
-                    if (root.TryGetProperty("address", out var aFlat) && aFlat.ValueKind == JsonValueKind.String)
-                        dto.DeliveryAddress = aFlat.GetString();
+                    string[] custDataKeys = { "customerData", "customer_data", "delivery_info", "location" };
+                    foreach (var cdk in custDataKeys)
+                    {
+                        if (root.TryGetProperty(cdk, out var cde) && cde.ValueKind == JsonValueKind.Object)
+                        {
+                            var parts = new List<string>();
+                            if (cde.TryGetProperty("address", out var a) && a.ValueKind == JsonValueKind.String && IsRealAddress(a.GetString())) parts.Add(a.GetString()!.Trim());
+                            if (cde.TryGetProperty("quarter", out var q) && q.ValueKind == JsonValueKind.String && IsRealAddress(q.GetString())) parts.Add(q.GetString()!.Trim());
+                            if (cde.TryGetProperty("city", out var c) && c.ValueKind == JsonValueKind.String && IsRealAddress(c.GetString())) parts.Add(c.GetString()!.Trim());
+                            if (cde.TryGetProperty("region", out var r) && r.ValueKind == JsonValueKind.String && IsRealAddress(r.GetString())) parts.Add(r.GetString()!.Trim());
+
+                            if (parts.Count > 0)
+                            {
+                                dto.DeliveryAddress = string.Join(", ", parts);
+                            }
+
+                            if (cde.TryGetProperty("notes", out var n) && n.ValueKind == JsonValueKind.String) dto.DeliveryNotes = n.GetString();
+                            if (cde.TryGetProperty("landmark", out var l) && l.ValueKind == JsonValueKind.String) dto.DeliveryLandmark = l.GetString();
+                            break;
+                        }
+                    }
+                }
+
+                if (string.IsNullOrEmpty(dto.DeliveryAddress))
+                {
+                    string[] descKeys = { "delivery_description", "address_description", "delivery_location", "location" };
+                    foreach (var dk in descKeys)
+                    {
+                        if (root.TryGetProperty(dk, out var dv) && dv.ValueKind == JsonValueKind.String && IsRealAddress(dv.GetString()))
+                        {
+                            dto.DeliveryAddress = dv.GetString()!.Trim();
+                            break;
+                        }
+                    }
+                }
+
+                if (string.IsNullOrEmpty(dto.DeliveryAddress))
+                {
+                    if (root.TryGetProperty("address", out var aFlat) && aFlat.ValueKind == JsonValueKind.String && IsRealAddress(aFlat.GetString()))
+                        dto.DeliveryAddress = aFlat.GetString()!.Trim();
                 }
 
                 // 3. Channel checks from source or delivery_type
-                string dtStr = "";
-                if (root.TryGetProperty("delivery_type", out var dtElem) && dtElem.ValueKind == JsonValueKind.String)
-                    dtStr = dtElem.GetString() ?? "";
-                else if (root.TryGetProperty("fulfillment_type", out var ftElem) && ftElem.ValueKind == JsonValueKind.String)
-                    dtStr = ftElem.GetString() ?? "";
-                else if (root.TryGetProperty("delivery_method", out var dmElem) && dmElem.ValueKind == JsonValueKind.String)
-                    dtStr = dmElem.GetString() ?? "";
-                else if (root.TryGetProperty("type", out var tElem) && tElem.ValueKind == JsonValueKind.String)
-                    dtStr = tElem.GetString() ?? "";
+                bool fulfillmentDetermined = false;
+                if (root.TryGetProperty("metadata", out var metaElem) && metaElem.ValueKind == JsonValueKind.Object)
+                {
+                    if (metaElem.TryGetProperty("fulfillment_method", out var fmElem) && fmElem.ValueKind == JsonValueKind.String)
+                    {
+                        var fm = fmElem.GetString();
+                        if (!string.IsNullOrWhiteSpace(fm))
+                        {
+                            dto.IsDelivery = fm.IndexOf("DELIVERY", StringComparison.OrdinalIgnoreCase) >= 0;
+                            fulfillmentDetermined = true;
+                        }
+                    }
+                }
 
-                if (dtStr.IndexOf("pickup", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                    dtStr.IndexOf("takeaway", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                    dtStr.IndexOf("dine_in", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                    dtStr.IndexOf("in_store", StringComparison.OrdinalIgnoreCase) >= 0)
+                if (!fulfillmentDetermined)
                 {
-                    dto.IsDelivery = false;
+                    string dtStr = "";
+                    if (root.TryGetProperty("delivery_type", out var dtElem) && dtElem.ValueKind == JsonValueKind.String)
+                        dtStr = dtElem.GetString() ?? "";
+                    else if (root.TryGetProperty("fulfillment_type", out var ftElem) && ftElem.ValueKind == JsonValueKind.String)
+                        dtStr = ftElem.GetString() ?? "";
+                    else if (root.TryGetProperty("delivery_method", out var dmElem) && dmElem.ValueKind == JsonValueKind.String)
+                        dtStr = dmElem.GetString() ?? "";
+                    else if (root.TryGetProperty("type", out var tElem) && tElem.ValueKind == JsonValueKind.String)
+                        dtStr = tElem.GetString() ?? "";
+
+                    if (dtStr.IndexOf("pickup", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        dtStr.IndexOf("takeaway", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        dtStr.IndexOf("dine_in", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        dtStr.IndexOf("in_store", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        dto.IsDelivery = false;
+                    }
+                    else if (root.TryGetProperty("is_pickup", out var ipElem) && (ipElem.ValueKind == JsonValueKind.True || (ipElem.ValueKind == JsonValueKind.String && ipElem.GetString().Equals("true", StringComparison.OrdinalIgnoreCase))))
+                    {
+                        dto.IsDelivery = false;
+                    }
+                    else
+                    {
+                        dto.IsDelivery = true;
+                    }
                 }
-                else if (root.TryGetProperty("is_pickup", out var ipElem) && (ipElem.ValueKind == JsonValueKind.True || (ipElem.ValueKind == JsonValueKind.String && ipElem.GetString().Equals("true", StringComparison.OrdinalIgnoreCase))))
+
+                if (!dto.IsDelivery)
                 {
-                    dto.IsDelivery = false;
-                }
-                else
-                {
-                    dto.IsDelivery = true;
+                    dto.DeliveryAddress = null;
                 }
 
                 // 4. Items list
@@ -831,6 +1021,26 @@ namespace PottaAPI.Services
             }
 
             return dto;
+        }
+
+        public static bool IsRealAddress(string? addr)
+        {
+            if (string.IsNullOrWhiteSpace(addr)) return false;
+            var trimmed = addr.Trim();
+            var clean = trimmed.Replace("-", "").Replace("_", "").Replace(" ", "").ToUpperInvariant();
+
+            if (clean == "PICKUP" || clean == "INSTORE" || clean == "INSTOREPICKUP" || 
+                clean == "TAKEAWAY" || clean == "DINEIN" || clean == "DELIVERY" ||
+                clean == "NA" || clean == "NONE" || clean == "NULL" || clean == "-" || 
+                clean == "--" || clean == "---" || clean == "..." || clean == "UNKNOWN" ||
+                clean == "LOCATION" || clean == "ADDRESS" || clean == "LOCATIONNOTSPECIFIED" ||
+                clean == "INSTORECUSTOMERPICKUP" || clean == "PICKUPINSTORE" || clean == "CUSTOMERPICKUP")
+            {
+                return false;
+            }
+
+            if (trimmed.Length < 2) return false;
+            return true;
         }
 
         private class WaitingTransactionRaw

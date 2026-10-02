@@ -277,6 +277,11 @@ namespace PottaAPI.Models
     {
         public string TransactionId { get; set; } = "";
         public string? CustomerId { get; set; }
+        public string? CustomerName { get; set; }
+        public string? CustomerPhone { get; set; }
+        public string? DeliveryAddress { get; set; }
+        public bool IsOnlineOrder { get; set; }
+        public bool IsDelivery { get; set; }
         public string? TableId { get; set; }
         public int? TableNumber { get; set; }
         public string? TableName { get; set; }
@@ -421,6 +426,7 @@ namespace PottaAPI.Models
         public string CloudId { get; set; } = "";
         public string OrderNumber { get; set; } = "";
         public string Status { get; set; } = "PENDING";
+        public string OrderStatus { get; set; } = "Pending";
         public string? PaymentMethod { get; set; }
         public decimal? Amount { get; set; }
         public string RawJson { get; set; } = "{}";
@@ -447,6 +453,7 @@ namespace PottaAPI.Models
     {
         [Required(ErrorMessage = "Status is required")]
         public string Status { get; set; } = "";
+        public string? OrderStatus { get; set; }
         public string? PaymentMethod { get; set; }
         public string? Note { get; set; }
     }

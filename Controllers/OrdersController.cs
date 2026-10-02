@@ -571,7 +571,7 @@ namespace PottaAPI.Controllers
                     });
                 }
 
-                var success = await _orderService.UpdateOnlineOrderStatusAsync(id, request.Status, request.PaymentMethod, request.Note);
+                var success = await _orderService.UpdateOnlineOrderStatusAsync(id, request.Status, request.PaymentMethod, request.Note, request.OrderStatus);
                 if (!success)
                 {
                     return NotFound(new ErrorResponseDto
