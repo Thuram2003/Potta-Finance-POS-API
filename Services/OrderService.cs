@@ -208,11 +208,6 @@ namespace PottaAPI.Services
                         string webTxId = $"web_{o.OrderNumber}";
                         if (!existingTxIds.Contains(o.OrderNumber) && !existingTxIds.Contains(o.CloudId) && !existingTxIds.Contains(webTxId))
                         {
-                            // Only include active orders
-                            if (o.Status.Equals("COMPLETED", StringComparison.OrdinalIgnoreCase) || 
-                                o.Status.Equals("DELIVERED", StringComparison.OrdinalIgnoreCase) || 
-                                o.Status.Equals("CANCELLED", StringComparison.OrdinalIgnoreCase))
-                                continue;
 
                             string tableName = o.IsDelivery ? "Online Delivery" : "Online Pickup";
 
@@ -221,14 +216,14 @@ namespace PottaAPI.Services
                                 TransactionId = webTxId,
                                 CustomerId = null,
                                 CustomerName = !string.IsNullOrWhiteSpace(o.CustomerName) && !o.CustomerName.Equals("Online Customer", StringComparison.OrdinalIgnoreCase) ? o.CustomerName : "Online Customer",
-                                CustomerPhone = null, // Kitchen does not know customer phone number
+                                CustomerPhone = null,
                                 DeliveryAddress = o.IsDelivery && IsRealAddress(o.DeliveryAddress) ? o.DeliveryAddress : null,
                                 IsOnlineOrder = true,
                                 IsDelivery = o.IsDelivery,
                                 TableName = tableName,
                                 Status = o.Status,
-                                Notes = null, // Do not add synthetic [ONLINE PICKUP] [UNPAID] notes to KDS
-                                CreatedDate = DateTime.TryParse(o.UpdatedAt, out var dt) ? dt : DateTime.Now,
+                                Notes = null, 
+                                CreatedDate = string.IsNullOrEmpty(o.UpdatedAt) ? DateTime.Now : DateTime.Parse(o.UpdatedAt),
                                 ModifiedDate = DateTime.Now,
                                 Items = o.Items
                             };
@@ -605,11 +600,12 @@ namespace PottaAPI.Services
                            payment_method AS PaymentMethod, amount AS Amount, raw_json AS RawJson,
                            stock_applied_at AS StockAppliedAt, stock_reversed_at AS StockReversedAt,
                            updated_at AS UpdatedAt
-                    FROM OnlineOrders";
+                    FROM OnlineOrders
+                    WHERE order_status NOT IN ('Completed', 'Cancelled')";
 
                 if (!string.IsNullOrEmpty(status))
                 {
-                    sql += " WHERE status = @Status OR order_status = @Status";
+                    sql += " AND (status = @Status OR order_status = @Status)";
                 }
 
                 sql += " ORDER BY updated_at DESC";
@@ -847,101 +843,7 @@ namespace PottaAPI.Services
                     dto.CustomerName = "Online Customer";
                 }
 
-                // 2. Delivery address info
-                // Check customer object in root
-                if (root.TryGetProperty("customer", out var custObj) && custObj.ValueKind == JsonValueKind.Object)
-                {
-                    string? addr = null;
-                    if (custObj.TryGetProperty("address", out var ca))
-                    {
-                        if (ca.ValueKind == JsonValueKind.String) addr = ca.GetString();
-                        else if (ca.ValueKind == JsonValueKind.Object && ca.TryGetProperty("street", out var st) && st.ValueKind == JsonValueKind.String) addr = st.GetString();
-                    }
-
-                    string? quarter = custObj.TryGetProperty("quarter", out var q) && q.ValueKind == JsonValueKind.String ? q.GetString() : null;
-                    string? city = custObj.TryGetProperty("city", out var c) && c.ValueKind == JsonValueKind.String ? c.GetString() : null;
-                    string? region = custObj.TryGetProperty("region", out var r) && r.ValueKind == JsonValueKind.String ? r.GetString() : null;
-
-                    var parts = new List<string>();
-                    if (IsRealAddress(addr)) parts.Add(addr!.Trim());
-                    if (IsRealAddress(quarter) && (addr == null || addr.IndexOf(quarter!, StringComparison.OrdinalIgnoreCase) < 0)) parts.Add(quarter!.Trim());
-                    if (IsRealAddress(city) && (addr == null || addr.IndexOf(city!, StringComparison.OrdinalIgnoreCase) < 0)) parts.Add(city!.Trim());
-                    if (IsRealAddress(region) && (city == null || !region!.Equals(city, StringComparison.OrdinalIgnoreCase)) && (addr == null || addr.IndexOf(region!, StringComparison.OrdinalIgnoreCase) < 0)) parts.Add(region!.Trim());
-
-                    if (parts.Count > 0)
-                    {
-                        dto.DeliveryAddress = string.Join(", ", parts);
-                    }
-                }
-
-                if (string.IsNullOrEmpty(dto.DeliveryAddress) && root.TryGetProperty("delivery_address", out var addrElem))
-                {
-                    if (addrElem.ValueKind == JsonValueKind.Object)
-                    {
-                        var parts = new List<string>();
-                        if (addrElem.TryGetProperty("address", out var a) && a.ValueKind == JsonValueKind.String && IsRealAddress(a.GetString())) parts.Add(a.GetString()!.Trim());
-                        if (addrElem.TryGetProperty("quarter", out var q) && q.ValueKind == JsonValueKind.String && IsRealAddress(q.GetString())) parts.Add(q.GetString()!.Trim());
-                        if (addrElem.TryGetProperty("city", out var c) && c.ValueKind == JsonValueKind.String && IsRealAddress(c.GetString())) parts.Add(c.GetString()!.Trim());
-                        if (parts.Count > 0) dto.DeliveryAddress = string.Join(", ", parts);
-
-                        if (addrElem.TryGetProperty("quarter", out var qv) && qv.ValueKind == JsonValueKind.String) dto.DeliveryQuarter = qv.GetString();
-                        if (addrElem.TryGetProperty("landmark", out var l) && l.ValueKind == JsonValueKind.String) dto.DeliveryLandmark = l.GetString();
-                        if (addrElem.TryGetProperty("directions", out var d) && d.ValueKind == JsonValueKind.String) dto.DeliveryNotes = d.GetString();
-                        if (addrElem.TryGetProperty("notes", out var n) && n.ValueKind == JsonValueKind.String) dto.DeliveryNotes = n.GetString();
-                        if (addrElem.TryGetProperty("recipient_phone", out var rp) && string.IsNullOrEmpty(dto.CustomerPhone))
-                            dto.CustomerPhone = rp.GetString();
-                    }
-                    else if (addrElem.ValueKind == JsonValueKind.String && IsRealAddress(addrElem.GetString()))
-                    {
-                        dto.DeliveryAddress = addrElem.GetString()!.Trim();
-                    }
-                }
-
-                if (string.IsNullOrEmpty(dto.DeliveryAddress))
-                {
-                    string[] custDataKeys = { "customerData", "customer_data", "delivery_info", "location" };
-                    foreach (var cdk in custDataKeys)
-                    {
-                        if (root.TryGetProperty(cdk, out var cde) && cde.ValueKind == JsonValueKind.Object)
-                        {
-                            var parts = new List<string>();
-                            if (cde.TryGetProperty("address", out var a) && a.ValueKind == JsonValueKind.String && IsRealAddress(a.GetString())) parts.Add(a.GetString()!.Trim());
-                            if (cde.TryGetProperty("quarter", out var q) && q.ValueKind == JsonValueKind.String && IsRealAddress(q.GetString())) parts.Add(q.GetString()!.Trim());
-                            if (cde.TryGetProperty("city", out var c) && c.ValueKind == JsonValueKind.String && IsRealAddress(c.GetString())) parts.Add(c.GetString()!.Trim());
-                            if (cde.TryGetProperty("region", out var r) && r.ValueKind == JsonValueKind.String && IsRealAddress(r.GetString())) parts.Add(r.GetString()!.Trim());
-
-                            if (parts.Count > 0)
-                            {
-                                dto.DeliveryAddress = string.Join(", ", parts);
-                            }
-
-                            if (cde.TryGetProperty("notes", out var n) && n.ValueKind == JsonValueKind.String) dto.DeliveryNotes = n.GetString();
-                            if (cde.TryGetProperty("landmark", out var l) && l.ValueKind == JsonValueKind.String) dto.DeliveryLandmark = l.GetString();
-                            break;
-                        }
-                    }
-                }
-
-                if (string.IsNullOrEmpty(dto.DeliveryAddress))
-                {
-                    string[] descKeys = { "delivery_description", "address_description", "delivery_location", "location" };
-                    foreach (var dk in descKeys)
-                    {
-                        if (root.TryGetProperty(dk, out var dv) && dv.ValueKind == JsonValueKind.String && IsRealAddress(dv.GetString()))
-                        {
-                            dto.DeliveryAddress = dv.GetString()!.Trim();
-                            break;
-                        }
-                    }
-                }
-
-                if (string.IsNullOrEmpty(dto.DeliveryAddress))
-                {
-                    if (root.TryGetProperty("address", out var aFlat) && aFlat.ValueKind == JsonValueKind.String && IsRealAddress(aFlat.GetString()))
-                        dto.DeliveryAddress = aFlat.GetString()!.Trim();
-                }
-
-                // 3. Channel checks from source or delivery_type
+                // 2. Channel & Fulfillment
                 bool fulfillmentDetermined = false;
                 if (root.TryGetProperty("metadata", out var metaElem) && metaElem.ValueKind == JsonValueKind.Object)
                 {
@@ -985,7 +887,80 @@ namespace PottaAPI.Services
                     }
                 }
 
-                if (!dto.IsDelivery)
+                // 3. Order-Specific Delivery Address
+                if (dto.IsDelivery)
+                {
+                    if (root.TryGetProperty("delivery_address", out var addrElem))
+                    {
+                        if (addrElem.ValueKind == JsonValueKind.Object)
+                        {
+                            var parts = new List<string>();
+                            if (addrElem.TryGetProperty("address", out var a) && a.ValueKind == JsonValueKind.String && IsRealAddress(a.GetString())) parts.Add(a.GetString()!.Trim());
+                            if (addrElem.TryGetProperty("quarter", out var q) && q.ValueKind == JsonValueKind.String && IsRealAddress(q.GetString())) parts.Add(q.GetString()!.Trim());
+                            if (addrElem.TryGetProperty("city", out var c) && c.ValueKind == JsonValueKind.String && IsRealAddress(c.GetString())) parts.Add(c.GetString()!.Trim());
+                            if (parts.Count > 0) dto.DeliveryAddress = string.Join(", ", parts);
+
+                            if (addrElem.TryGetProperty("quarter", out var qv) && qv.ValueKind == JsonValueKind.String) dto.DeliveryQuarter = qv.GetString();
+                            if (addrElem.TryGetProperty("landmark", out var l) && l.ValueKind == JsonValueKind.String) dto.DeliveryLandmark = l.GetString();
+                            if (addrElem.TryGetProperty("directions", out var d) && d.ValueKind == JsonValueKind.String) dto.DeliveryNotes = d.GetString();
+                            if (addrElem.TryGetProperty("notes", out var n) && n.ValueKind == JsonValueKind.String) dto.DeliveryNotes = n.GetString();
+                            if (addrElem.TryGetProperty("recipient_phone", out var rp) && string.IsNullOrEmpty(dto.CustomerPhone))
+                                dto.CustomerPhone = rp.GetString();
+                        }
+                        else if (addrElem.ValueKind == JsonValueKind.String && IsRealAddress(addrElem.GetString()))
+                        {
+                            dto.DeliveryAddress = addrElem.GetString()!.Trim();
+                        }
+                    }
+
+                    if (string.IsNullOrEmpty(dto.DeliveryAddress) && root.TryGetProperty("metadata", out var meta))
+                    {
+                        if (meta.TryGetProperty("delivery_notes", out var dn) && dn.ValueKind == JsonValueKind.String && IsRealAddress(dn.GetString()))
+                            dto.DeliveryAddress = dn.GetString()!.Trim();
+                        if (meta.TryGetProperty("landmark", out var lm) && lm.ValueKind == JsonValueKind.String)
+                            dto.DeliveryLandmark = lm.GetString();
+                    }
+
+                    if (string.IsNullOrEmpty(dto.DeliveryAddress))
+                    {
+                        string[] custDataKeys = { "customerData", "customer_data", "delivery_info", "shipping_address", "location" };
+                        foreach (var cdk in custDataKeys)
+                        {
+                            if (root.TryGetProperty(cdk, out var cde) && cde.ValueKind == JsonValueKind.Object)
+                            {
+                                var parts = new List<string>();
+                                if (cde.TryGetProperty("delivery_address", out var da) && da.ValueKind == JsonValueKind.String && IsRealAddress(da.GetString())) parts.Add(da.GetString()!.Trim());
+                                else if (cde.TryGetProperty("address", out var a) && a.ValueKind == JsonValueKind.String && IsRealAddress(a.GetString())) parts.Add(a.GetString()!.Trim());
+                                if (cde.TryGetProperty("quarter", out var q) && q.ValueKind == JsonValueKind.String && IsRealAddress(q.GetString())) parts.Add(q.GetString()!.Trim());
+                                if (cde.TryGetProperty("city", out var c) && c.ValueKind == JsonValueKind.String && IsRealAddress(c.GetString())) parts.Add(c.GetString()!.Trim());
+                                if (cde.TryGetProperty("region", out var r) && r.ValueKind == JsonValueKind.String && IsRealAddress(r.GetString())) parts.Add(r.GetString()!.Trim());
+
+                                if (parts.Count > 0)
+                                {
+                                    dto.DeliveryAddress = string.Join(", ", parts);
+                                }
+
+                                if (cde.TryGetProperty("notes", out var n) && n.ValueKind == JsonValueKind.String) dto.DeliveryNotes = n.GetString();
+                                if (cde.TryGetProperty("landmark", out var l) && l.ValueKind == JsonValueKind.String) dto.DeliveryLandmark = l.GetString();
+                                break;
+                            }
+                        }
+                    }
+
+                    if (string.IsNullOrEmpty(dto.DeliveryAddress))
+                    {
+                        string[] descKeys = { "delivery_description", "address_description", "delivery_location" };
+                        foreach (var dk in descKeys)
+                        {
+                            if (root.TryGetProperty(dk, out var dv) && dv.ValueKind == JsonValueKind.String && IsRealAddress(dv.GetString()))
+                            {
+                                dto.DeliveryAddress = dv.GetString()!.Trim();
+                                break;
+                            }
+                        }
+                    }
+                }
+                else
                 {
                     dto.DeliveryAddress = null;
                 }

@@ -49,9 +49,15 @@ namespace PottaAPI.Services
             if (isDebugMode)
             {
                 // Navigate from API bin folder to WPF app bin folder
+                // Try win-x64 path first (self-contained/runtime-specific builds)
+                var debugPathWinX64 = Path.GetFullPath(Path.Combine(baseDirectory, @"..\..\..\..\Potta Finance\bin\Debug\net8.0-windows10.0.19041.0\win-x64\pottadb.db"));
+                possiblePaths.Add(debugPathWinX64);
+                
+                // Also try the standard path (non-runtime-specific builds)
                 var debugPath = Path.GetFullPath(Path.Combine(baseDirectory, @"..\..\..\..\Potta Finance\bin\Debug\net8.0-windows\pottadb.db"));
                 possiblePaths.Add(debugPath);
-                Console.WriteLine($"Running in DEBUG mode. Looking for database at: {debugPath}");
+                
+                Console.WriteLine($"Running in DEBUG mode. Searching for database...");
             }
             else
             {

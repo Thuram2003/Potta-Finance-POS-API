@@ -1,21 +1,22 @@
+using AspNetCore.Swagger.Themes;
+using AspNetCoreRateLimit;
+using Dapper;
+using FluentValidation;
+using FluentValidation.AspNetCore;
 using Microsoft.AspNetCore.Cors;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Caching.Memory;
 using PottaAPI.Configuration;
+using PottaAPI.Infrastructure;
 using PottaAPI.Middleware;
 using PottaAPI.Services;
+using PottaAPI.Services.Interfaces;
+using Serilog;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
-using AspNetCore.Swagger.Themes;
-using FluentValidation;
-using FluentValidation.AspNetCore;
-using Serilog;
-using AspNetCoreRateLimit;
-using PottaAPI.Services.Interfaces;
-using Dapper;
-using PottaAPI.Infrastructure;
 
 // Register Dapper type handlers for SQLite compatibility
 SqlMapper.AddTypeHandler(new JsonListTypeHandler());
@@ -220,7 +221,14 @@ try
     string resolvedImagePath;
 #if DEBUG
     var baseDirectory = AppDomain.CurrentDomain.BaseDirectory;
-    resolvedImagePath = Path.GetFullPath(Path.Combine(baseDirectory, "../../../../Potta Finance/bin/Debug/net8.0-windows/Images"));
+    resolvedImagePath = Path.GetFullPath(Path.Combine(baseDirectory, "../../../../Potta Finance/bin/Debug/net8.0-windows10.0.19041.0/win-x64"));
+    
+    // Fallback to standard path if win-x64 doesn't exist
+    if (!Directory.Exists(resolvedImagePath))
+    {
+        resolvedImagePath = Path.GetFullPath(Path.Combine(baseDirectory, "../../../../Potta Finance/bin/Debug/net8.0-windows"));
+    }
+
     Log.Information("DEBUG MODE: Image path determination");
 #else
     var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);

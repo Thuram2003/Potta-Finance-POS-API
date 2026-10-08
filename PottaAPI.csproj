@@ -8,7 +8,11 @@
 		<Version>$(APP_VERSION)</Version>
 		<AssemblyVersion>$(APP_VERSION)</AssemblyVersion>
 		<FileVersion>$(APP_VERSION)</FileVersion>
-		<RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+		<!-- RuntimeIdentifier should only be set during publish, not during debug builds -->
+		<RuntimeIdentifier Condition="'$(Configuration)' == 'Release' OR '$(PublishProtocol)' != ''">win-x64</RuntimeIdentifier>
+		<SelfContained Condition="'$(RuntimeIdentifier)' != ''">true</SelfContained>
+		<PublishSingleFile>false</PublishSingleFile>
+		<IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
 		<!-- Generate XML docs so Swagger can pick up /// comments -->
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
 		<NoWarn>$(NoWarn);1591</NoWarn>
