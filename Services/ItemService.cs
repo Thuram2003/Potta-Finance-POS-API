@@ -1079,13 +1079,24 @@ namespace PottaAPI.Services
         }
 
         /// <summary>
-        /// Converts Windows file paths to API-accessible URLs
+        /// Converts image paths to API-accessible URLs.
+        /// Handles both:
+        /// 1. Cloudinary CDN URLs (https://res.cloudinary.com/...) - returned as-is
+        /// 2. Local Windows file paths (Images\product.jpg) - converted to /images/product.jpg
         /// </summary>
         private string ConvertPathToUrl(string path)
         {
             if (string.IsNullOrEmpty(path))
                 return string.Empty;
 
+            // ✅ CLOUDINARY SUPPORT: If already a full URL (Cloudinary/external CDN), return as-is
+            if (path.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || 
+                path.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            {
+                return path; // Return Cloudinary or external CDN URL unchanged
+            }
+
+            // ✅ LOCAL FILE SUPPORT: Convert Windows file paths to API-accessible URLs
             // Replace Windows backslashes with forward slashes
             var urlPath = path.Replace("\\", "/");
 

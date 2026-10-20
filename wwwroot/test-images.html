@@ -126,8 +126,9 @@
                 const response = await fetch(`${API_BASE}/api/items?page=1&pageSize=12`);
                 const data = await response.json();
 
-                if (data.success && data.data && data.data.length > 0) {
-                    const items = data.data;
+                // API returns: { success: true, data: { items: [...], totalPages: N } }
+                if (data.success && data.data && data.data.items && data.data.items.length > 0) {
+                    const items = data.data.items;
                     container.innerHTML = `
                         <p>Found ${items.length} items</p>
                         <div class="image-grid">

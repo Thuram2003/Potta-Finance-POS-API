@@ -489,6 +489,12 @@ namespace PottaAPI.Services
         {
             if (string.IsNullOrEmpty(path)) return string.Empty;
 
+            if (path.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || 
+                path.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            {
+                return path;
+            }
+
             var urlPath = path.Replace("\\", "/");
             if (urlPath.StartsWith("Images/", StringComparison.OrdinalIgnoreCase))
             {

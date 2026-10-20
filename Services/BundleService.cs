@@ -215,6 +215,14 @@ namespace PottaAPI.Services
         {
             if (string.IsNullOrEmpty(path)) return string.Empty;
 
+            // ✅ CLOUDINARY SUPPORT: If already a full URL (Cloudinary/external CDN), return as-is
+            if (path.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || 
+                path.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            {
+                return path; // Return Cloudinary or external CDN URL unchanged
+            }
+
+            // ✅ LOCAL FILE SUPPORT: Convert Windows file paths to API-accessible URLs
             var urlPath = path.Replace("\\", "/");
             if (urlPath.StartsWith("Images/", StringComparison.OrdinalIgnoreCase))
             {

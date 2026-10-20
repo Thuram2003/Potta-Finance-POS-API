@@ -235,7 +235,7 @@ namespace PottaAPI.Services
                 parameters.Add("@searchTerm", $"%{searchRequest.SearchTerm}%");
             }
 
-            // Count query — separate conditions for each subquery
+            // Count query ï¿½ separate conditions for each subquery
             var countSql = $@"
         SELECT
           (SELECT COUNT(*)
@@ -419,6 +419,12 @@ namespace PottaAPI.Services
         private string ConvertPathToUrl(string? path)
         {
             if (string.IsNullOrEmpty(path)) return string.Empty;
+
+            if (path.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || 
+                path.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            {
+                return path;
+            }
 
             var urlPath = path.Replace("\\", "/");
             if (urlPath.StartsWith("Images/", StringComparison.OrdinalIgnoreCase))
