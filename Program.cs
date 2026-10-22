@@ -194,11 +194,20 @@ try
     app.UseGlobalExceptionHandler();
 
     app.UseWhen(
-        context => !context.Request.Path.StartsWithSegments("/images") &&
-                   !context.Request.Path.StartsWithSegments("/swagger") &&
-                   !context.Request.Path.Value?.EndsWith(".html") != true &&
-                   !context.Request.Path.Value?.EndsWith(".css") != true &&
-                   !context.Request.Path.Value?.EndsWith(".js") != true,
+        context =>
+        {
+            var path = context.Request.Path.Value ?? string.Empty;
+            return !path.StartsWith("/images", StringComparison.OrdinalIgnoreCase) &&
+                   !path.StartsWith("/swagger", StringComparison.OrdinalIgnoreCase) &&
+                   !path.StartsWith("/health", StringComparison.OrdinalIgnoreCase) &&
+                   !path.StartsWith("/api/orders/waiting", StringComparison.OrdinalIgnoreCase) &&
+                   !path.EndsWith(".html", StringComparison.OrdinalIgnoreCase) &&
+                   !path.EndsWith(".css", StringComparison.OrdinalIgnoreCase) &&
+                   !path.EndsWith(".js", StringComparison.OrdinalIgnoreCase) &&
+                   !path.EndsWith(".ico", StringComparison.OrdinalIgnoreCase) &&
+                   !path.EndsWith(".png", StringComparison.OrdinalIgnoreCase) &&
+                   !path.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase);
+        },
         appBuilder => appBuilder.UseIpRateLimiting()
     );
 

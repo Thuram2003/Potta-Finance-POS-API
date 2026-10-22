@@ -188,6 +188,20 @@ namespace PottaAPI.Services
 
                         if (!string.IsNullOrEmpty(transaction.TransactionId))
                         {
+                            // Strictly filter: do not return online orders older than 24 hours
+                            bool isOnline = (row.IsOnlineOrder != null && Convert.ToBoolean(row.IsOnlineOrder)) ||
+                                            transaction.TransactionId.StartsWith("web_", StringComparison.OrdinalIgnoreCase) ||
+                                            (!string.IsNullOrEmpty(transaction.TableName) && transaction.TableName.IndexOf("Online", StringComparison.OrdinalIgnoreCase) >= 0);
+
+                            if (isOnline)
+                            {
+                                var utcCreated = transaction.CreatedDate.Kind == DateTimeKind.Utc ? transaction.CreatedDate : transaction.CreatedDate.ToUniversalTime();
+                                if ((DateTime.UtcNow - utcCreated).TotalHours > 24)
+                                {
+                                    continue; // Skip online order older than 24 hours
+                                }
+                            }
+
                             transactions.Add(transaction);
                         }
                     }
@@ -209,6 +223,13 @@ namespace PottaAPI.Services
                         if (!existingTxIds.Contains(o.OrderNumber) && !existingTxIds.Contains(o.CloudId) && !existingTxIds.Contains(webTxId))
                         {
 
+                            DateTime orderDate = string.IsNullOrEmpty(o.UpdatedAt) ? DateTime.Now : (DateTime.TryParse(o.UpdatedAt, out var parsedDt) ? parsedDt : DateTime.Now);
+                            var utcOrder = orderDate.Kind == DateTimeKind.Utc ? orderDate : orderDate.ToUniversalTime();
+                            if ((DateTime.UtcNow - utcOrder).TotalHours > 24)
+                            {
+                                continue; // Strictly skip online orders older than 24 hours
+                            }
+
                             string tableName = o.IsDelivery ? "Online Delivery" : "Online Pickup";
 
                             var onlineTx = new WaitingTransactionDto
@@ -223,7 +244,7 @@ namespace PottaAPI.Services
                                 TableName = tableName,
                                 Status = o.Status,
                                 Notes = null, 
-                                CreatedDate = string.IsNullOrEmpty(o.UpdatedAt) ? DateTime.Now : DateTime.Parse(o.UpdatedAt),
+                                CreatedDate = orderDate,
                                 ModifiedDate = DateTime.Now,
                                 Items = o.Items
                             };
@@ -561,8 +582,10 @@ namespace PottaAPI.Services
             }
         }
 
+        private static bool _onlineOrdersColumnChecked = false;
         private static async Task EnsureOnlineOrdersOrderStatusColumnAsync(SqliteConnection connection)
         {
+            if (_onlineOrdersColumnChecked) return;
             try
             {
                 var pragmaSql = "PRAGMA table_info(OnlineOrders);";
@@ -581,6 +604,7 @@ namespace PottaAPI.Services
                 {
                     await connection.ExecuteAsync("ALTER TABLE OnlineOrders ADD COLUMN order_status TEXT DEFAULT 'Pending';");
                 }
+                _onlineOrdersColumnChecked = true;
             }
             catch { }
         }
@@ -601,7 +625,8 @@ namespace PottaAPI.Services
                            stock_applied_at AS StockAppliedAt, stock_reversed_at AS StockReversedAt,
                            updated_at AS UpdatedAt
                     FROM OnlineOrders
-                    WHERE order_status NOT IN ('Completed', 'Cancelled')";
+                    WHERE order_status NOT IN ('Completed', 'Cancelled')
+                      AND (datetime(updated_at) >= datetime('now', '-24 hours') OR updated_at >= datetime('now', '-24 hours'))";
 
                 if (!string.IsNullOrEmpty(status))
                 {
@@ -619,6 +644,24 @@ namespace PottaAPI.Services
                         var dto = ParseOnlineOrderRow(row);
                         if (dto != null)
                         {
+                            // Strictly do not return online orders older than 24 hours
+                            DateTime? orderDt = null;
+                            DateTime parsedUp = default;
+                            DateTime parsedCr = default;
+                            if (!string.IsNullOrEmpty(dto.UpdatedAt) && DateTime.TryParse(dto.UpdatedAt, out parsedUp))
+                                orderDt = parsedUp;
+                            else if (!string.IsNullOrEmpty(dto.CreatedAt) && DateTime.TryParse(dto.CreatedAt, out parsedCr))
+                                orderDt = parsedCr;
+
+                            if (orderDt.HasValue)
+                            {
+                                var utc = orderDt.Value.Kind == DateTimeKind.Utc ? orderDt.Value : orderDt.Value.ToUniversalTime();
+                                if ((DateTime.UtcNow - utc).TotalHours > 24)
+                                {
+                                    continue;
+                                }
+                            }
+
                             orders.Add(dto);
                         }
                     }
